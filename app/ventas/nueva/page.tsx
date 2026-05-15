@@ -390,7 +390,16 @@ export default function NuevaVentaPage() {
     }
   }
 
+  // ============================================
+  // FINALIZAR VENTA CON LOGS
+  // ============================================
+
   const finalizarVenta = async () => {
+    console.log('=== INICIANDO VENTA ===')
+    console.log('clienteId seleccionado:', clienteId)
+    console.log('clienteSeleccionado:', clienteSeleccionado)
+    console.log('carrito items:', carrito.length)
+
     if (carrito.length === 0) {
       alert('Agregue productos al carrito')
       return
@@ -400,6 +409,7 @@ export default function NuevaVentaPage() {
 
     try {
       const { data: { user } } = await supabase.auth.getUser()
+      console.log('Usuario autenticado:', user?.id)
       
       if (!user) {
         throw new Error('Usuario no autenticado')
@@ -408,12 +418,18 @@ export default function NuevaVentaPage() {
       let clienteFinal = clienteId
       let clienteInfo: Cliente | null = clienteSeleccionado
 
+      console.log('ClienteFinal (antes de buscar mostrador):', clienteFinal)
+
       if (!clienteFinal) {
-        const { data: mostrador } = await supabase
+        console.log('Buscando Cliente Mostrador...')
+        const { data: mostrador, error: mostradorError } = await supabase
           .from('clientes')
           .select('id, nombre, telefono, numero_documento, tipo_documento')
           .eq('nombre', 'Cliente Mostrador')
           .single()
+        
+        console.log('Error al buscar mostrador:', mostradorError)
+        console.log('Cliente Mostrador encontrado:', mostrador)
         
         if (mostrador) {
           clienteFinal = mostrador.id
@@ -421,40 +437,60 @@ export default function NuevaVentaPage() {
         }
       }
 
-      // ✅ Usar la nueva función secuencial
+      console.log('ClienteFinal FINAL:', clienteFinal)
+      console.log('ClienteInfo FINAL:', clienteInfo)
+
+      // Generar factura secuencial
+      console.log('Generando factura secuencial...')
       const factura = await generarNumeroFactura()
+      console.log('Factura generada:', factura)
       
+      const ventaData = {
+        numero_factura: factura,
+        id_cliente: clienteFinal || null,
+        id_usuario: user.id,
+        subtotal: subtotal,
+        descuento: 0,
+        impuesto: iva,
+        total: total,
+        metodo_pago: metodoPago,
+        estado: 'completada'
+      }
+      console.log('Datos a insertar en ventas:', ventaData)
+
       const { data: venta, error: errorVenta } = await supabase
         .from('ventas')
-        .insert({
-          numero_factura: factura,
-          id_cliente: clienteFinal || null,
-          id_usuario: user.id,
-          subtotal: subtotal,
-          descuento: 0,
-          impuesto: iva,
-          total: total,
-          metodo_pago: metodoPago,
-          estado: 'completada'
-        })
+        .insert(ventaData)
         .select()
         .single()
 
-      if (errorVenta) throw errorVenta
+      if (errorVenta) {
+        console.error('Error al insertar venta:', errorVenta)
+        throw errorVenta
+      }
+      
+      console.log('Venta insertada correctamente:', venta)
 
       for (const item of carrito) {
+        const detalleData = {
+          id_venta: venta.id,
+          id_producto: item.productoId,
+          cantidad: item.cantidad,
+          precio_unitario: item.precio
+        }
+        console.log('Insertando detalle:', detalleData)
+        
         const { error: errorDetalle } = await supabase
           .from('detalle_ventas')
-          .insert({
-            id_venta: venta.id,
-            id_producto: item.productoId,
-            cantidad: item.cantidad,
-            precio_unitario: item.precio
-          })
+          .insert(detalleData)
 
-        if (errorDetalle) throw errorDetalle
+        if (errorDetalle) {
+          console.error('Error al insertar detalle:', errorDetalle)
+          throw errorDetalle
+        }
       }
 
+      console.log('Todos los detalles insertados correctamente')
       imprimirTicket(factura, clienteInfo)
       
       setTimeout(() => {
@@ -464,7 +500,7 @@ export default function NuevaVentaPage() {
       }, 2000)
       
     } catch (error) {
-      console.error('Error:', error)
+      console.error('Error general:', error)
       alert('Error al procesar la venta')
     } finally {
       setLoading(false)
