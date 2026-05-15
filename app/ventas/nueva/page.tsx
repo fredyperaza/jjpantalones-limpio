@@ -33,11 +33,6 @@ interface Cliente {
   tipo_documento: string
 }
 
-// Helper function FUERA del componente
-const generarNumeroFactura = () => {
-  return `FAC-${Date.now()}`
-}
-
 export default function NuevaVentaPage() {
   const [productos, setProductos] = useState<Producto[]>([])
   const [carrito, setCarrito] = useState<ItemCarrito[]>([])
@@ -76,6 +71,7 @@ export default function NuevaVentaPage() {
     return true
   }, [router])
 
+  // ✅ Función para generar ID único del carrito
   const generarIdUnico = () => {
     const id = nextIdRef.current
     nextIdRef.current += 1
@@ -124,6 +120,23 @@ export default function NuevaVentaPage() {
   const subtotal = calcularSubtotal()
   const iva = calcularIVA()
   const total = calcularTotal()
+
+  // ✅ NUEVA FUNCIÓN: Generar número de factura secuencial
+  const generarNumeroFactura = useCallback(async () => {
+    try {
+      const { data, error } = await supabase.rpc('siguiente_numero_factura')
+      
+      if (error) {
+        console.error('Error generando factura:', error)
+        return `FAC-${Date.now()}`
+      }
+      
+      return data
+    } catch (error) {
+      console.error('Error:', error)
+      return `FAC-${Date.now()}`
+    }
+  }, [])
 
   // ============================================
   // USEEFFECT CON VERIFICACIÓN DE ROL
@@ -352,7 +365,6 @@ export default function NuevaVentaPage() {
               ${metodoPago === 'efectivo' ? '💵 Efectivo' : 
                 metodoPago === 'tarjeta' ? '💳 Tarjeta' : 
                 metodoPago === 'transferencia' ? '🏦 Transferencia' : metodoPago}
-                
             </span>
           </div>
           
@@ -409,7 +421,8 @@ export default function NuevaVentaPage() {
         }
       }
 
-      const factura = generarNumeroFactura()
+      // ✅ Usar la nueva función secuencial
+      const factura = await generarNumeroFactura()
       
       const { data: venta, error: errorVenta } = await supabase
         .from('ventas')
@@ -574,7 +587,6 @@ export default function NuevaVentaPage() {
                   <option value="efectivo">💵 Efectivo</option>
                   <option value="tarjeta">💳 Tarjeta</option>
                   <option value="transferencia">🏦 Transferencia</option>
-                  
                 </select>
               </div>
 
