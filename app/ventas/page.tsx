@@ -116,19 +116,28 @@ export default function NuevaVentaPage() {
   const total = calcularTotal()
 
   // ✅ IMPORTANTE: Esta función llama a Supabase
-  const generarNumeroFactura = useCallback(async () => {
-    try {
-      const { data, error } = await supabase.rpc('siguiente_numero_factura')
-      if (error) {
-        console.error('Error:', error)
-        return `FAC-${Date.now()}`
-      }
-      return data
-    } catch (error) {
-      console.error('Error:', error)
+ const generarNumeroFactura = useCallback(async () => {
+  try {
+    console.log('Llamando a supabase.rpc...')
+    const { data, error } = await supabase.rpc('siguiente_numero_factura')
+    console.log('Respuesta de Supabase:', { data, error })
+    
+    if (error) {
+      console.error('Error de Supabase:', error)
       return `FAC-${Date.now()}`
     }
-  }, [])
+    
+    if (!data) {
+      console.error('No se recibió data')
+      return `FAC-${Date.now()}`
+    }
+    
+    return data
+  } catch (error) {
+    console.error('Error en try-catch:', error)
+    return `FAC-${Date.now()}`
+  }
+}, [])
 
   useEffect(() => {
     const iniciar = async () => {
