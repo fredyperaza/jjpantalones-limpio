@@ -1,26 +1,26 @@
 'use client'
- 
+
 import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import { Search, Eye, Printer } from 'lucide-react'
- 
+
 interface ClienteInfo {
   nombre: string
   numero_documento: string
   tipo_documento: string
 }
- 
+
 interface UsuarioInfo {
   nombre_completo: string
 }
- 
+
 interface ProductoDetalle {
   nombre: string
   talla: string
   color: string
 }
- 
+
 interface Venta {
   id: string
   numero_factura: string
@@ -33,7 +33,7 @@ interface Venta {
   cliente: ClienteInfo | null
   usuario: UsuarioInfo | null
 }
- 
+
 interface DetalleVenta {
   id: string
   cantidad: number
@@ -41,13 +41,13 @@ interface DetalleVenta {
   subtotal: number
   producto: ProductoDetalle | null
 }
- 
+
 interface ItemTicket {
   cantidad: number
   precio_unitario: number
   producto: ProductoDetalle | null
 }
- 
+
 // ✅ FIX 1: Tipos raw que devuelve Supabase (producto como array)
 interface DetalleRaw {
   id: string
@@ -56,13 +56,13 @@ interface DetalleRaw {
   subtotal: number
   producto: ProductoDetalle[]
 }
- 
+
 interface ItemTicketRaw {
   cantidad: number
   precio_unitario: number
   producto: ProductoDetalle[]
 }
- 
+
 interface VentaRaw {
   id: string
   numero_factura: string
@@ -75,11 +75,26 @@ interface VentaRaw {
   cliente: ClienteInfo[]
   usuario: UsuarioInfo[]
 }
- 
+
+// ✅ Formatea fecha de Supabase (UTC) a hora local de El Salvador (UTC-6)
+const formatearFechaSV = (fechaISO: string): string => {
+  const fecha = new Date(fechaISO)
+  return fecha.toLocaleString('es-SV', {
+    timeZone: 'America/El_Salvador',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true
+  })
+}
+
 type ClienteResponse = ClienteInfo | ClienteInfo[] | null
 type UsuarioResponse = UsuarioInfo | UsuarioInfo[] | null
 type ProductoResponse = ProductoDetalle | ProductoDetalle[] | null
- 
+
 export default function HistorialVentasPage() {
   const [ventas, setVentas] = useState<Venta[]>([])
   const [loading, setLoading] = useState(true)
@@ -91,7 +106,7 @@ export default function HistorialVentasPage() {
   const [showModal, setShowModal] = useState(false)
   const [autorizado, setAutorizado] = useState(false)
   const router = useRouter()
- 
+
   const verificarRol = useCallback(async () => {
     const { data: { session } } = await supabase.auth.getSession()
     if (!session) {
@@ -109,35 +124,35 @@ export default function HistorialVentasPage() {
     }
     return true
   }, [router])
- 
+
   const verificarSesion = useCallback(async () => {
     const { data } = await supabase.auth.getSession()
     if (!data.session) {
       router.push('/login')
     }
   }, [router])
- 
+
   const obtenerClienteData = (cliente: ClienteResponse): ClienteInfo | null => {
     if (!cliente) return null
     if (Array.isArray(cliente) && cliente.length > 0) return cliente[0]
     if (!Array.isArray(cliente)) return cliente
     return null
   }
- 
+
   const obtenerUsuarioData = (usuario: UsuarioResponse): UsuarioInfo | null => {
     if (!usuario) return null
     if (Array.isArray(usuario) && usuario.length > 0) return usuario[0]
     if (!Array.isArray(usuario)) return usuario
     return null
   }
- 
+
   const obtenerProductoData = (producto: ProductoResponse): ProductoDetalle | null => {
     if (!producto) return null
     if (Array.isArray(producto) && producto.length > 0) return producto[0]
     if (!Array.isArray(producto)) return producto
     return null
   }
- 
+
   const cargarVentas = useCallback(async () => {
     setLoading(true)
     try {
@@ -162,18 +177,18 @@ export default function HistorialVentasPage() {
           )
         `)
         .order('fecha_venta', { ascending: false })
- 
+
       if (fechaInicio) {
         query = query.gte('fecha_venta', fechaInicio)
       }
       if (fechaFin) {
         query = query.lte('fecha_venta', `${fechaFin} 23:59:59`)
       }
- 
+
       const { data, error } = await query
- 
+
       if (error) throw error
- 
+
       // ✅ FIX 2: Reemplazar `any` por VentaRaw
       const ventasFormateadas: Venta[] = (data || []).map((item: VentaRaw) => ({
         id: item.id,
@@ -187,7 +202,7 @@ export default function HistorialVentasPage() {
         cliente: obtenerClienteData(item.cliente),
         usuario: obtenerUsuarioData(item.usuario)
       }))
- 
+
       setVentas(ventasFormateadas)
     } catch (error) {
       console.error('Error:', error)
@@ -195,7 +210,7 @@ export default function HistorialVentasPage() {
       setLoading(false)
     }
   }, [fechaInicio, fechaFin])
- 
+
   useEffect(() => {
     const iniciar = async () => {
       const tieneAcceso = await verificarRol()
@@ -206,11 +221,11 @@ export default function HistorialVentasPage() {
     }
     iniciar()
   }, [verificarRol, verificarSesion, cargarVentas])
- 
+
   const verDetalle = async (venta: Venta) => {
     setSelectedVenta(venta)
     setShowModal(true)
- 
+
     const { data, error } = await supabase
       .from('detalle_ventas')
       .select(`
@@ -225,12 +240,12 @@ export default function HistorialVentasPage() {
         )
       `)
       .eq('id_venta', venta.id)
- 
+
     if (error) {
       console.error('Error al cargar detalles:', error)
       return
     }
- 
+
     if (data) {
       // ✅ FIX 3: Reemplazar `any` por DetalleRaw (incluye id y subtotal)
       const detallesFormateados: DetalleVenta[] = (data as DetalleRaw[]).map((item: DetalleRaw) => ({
@@ -243,7 +258,7 @@ export default function HistorialVentasPage() {
       setDetalles(detallesFormateados)
     }
   }
- 
+
   const reimprimirTicket = async (venta: Venta) => {
     const { data: detallesData, error } = await supabase
       .from('detalle_ventas')
@@ -257,29 +272,29 @@ export default function HistorialVentasPage() {
         )
       `)
       .eq('id_venta', venta.id)
- 
+
     if (error) {
       console.error('Error al cargar detalles:', error)
       return
     }
- 
+
     // ✅ FIX 4: Reemplazar `any` por ItemTicketRaw
     const items: ItemTicket[] = (detallesData as ItemTicketRaw[] || []).map((item: ItemTicketRaw) => ({
       cantidad: item.cantidad,
       precio_unitario: item.precio_unitario,
       producto: obtenerProductoData(item.producto)
     }))
- 
-    const fechaOriginal = new Date(venta.fecha_venta).toLocaleString('es-SV')
+
+    const fechaOriginal = formatearFechaSV(venta.fecha_venta)
     const total = venta.total || items.reduce((sum, item) => sum + (item.cantidad * item.precio_unitario), 0)
     
     const subtotalSinIVA = total / 1.13
     const ivaCalculado = total - subtotalSinIVA
- 
+
     let clienteNombre = 'Cliente Mostrador'
     let clienteDocumento = ''
     let clienteTipo = ''
- 
+
     if (venta.id_cliente) {
       const { data: clienteData } = await supabase
         .from('clientes')
@@ -297,7 +312,7 @@ export default function HistorialVentasPage() {
       clienteDocumento = venta.cliente.numero_documento || ''
       clienteTipo = venta.cliente.tipo_documento || ''
     }
- 
+
     const htmlTicket = `
       <!DOCTYPE html>
       <html>
@@ -343,24 +358,24 @@ export default function HistorialVentasPage() {
       </body>
       </html>
     `
- 
+
     const ventanaTicket = window.open('', '_blank', 'width=400,height=600')
     if (ventanaTicket) {
       ventanaTicket.document.write(htmlTicket)
       ventanaTicket.document.close()
     }
   }
- 
+
   const handleLogout = async () => {
     await supabase.auth.signOut()
     router.push('/login')
   }
- 
+
   const ventasFiltradas = ventas.filter(v =>
     v.numero_factura.toLowerCase().includes(search.toLowerCase()) ||
     v.cliente?.nombre?.toLowerCase().includes(search.toLowerCase())
   )
- 
+
   if (!autorizado) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-100">
@@ -371,7 +386,7 @@ export default function HistorialVentasPage() {
       </div>
     )
   }
- 
+
   return (
     <div className="min-h-screen bg-gray-100">
       <header className="bg-[#003366] shadow-lg sticky top-0 z-10">
@@ -394,10 +409,10 @@ export default function HistorialVentasPage() {
           </div>
         </div>
       </header>
- 
+
       <main className="max-w-7xl mx-auto px-4 py-8">
         <h2 className="text-2xl font-bold text-[#003366] mb-6">📜 Historial de Ventas</h2>
- 
+
         <div className="bg-white rounded-lg shadow p-4 mb-6">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div className="relative">
@@ -442,7 +457,7 @@ export default function HistorialVentasPage() {
             </div>
           </div>
         </div>
- 
+
         <div className="bg-white rounded-lg shadow overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -471,7 +486,7 @@ export default function HistorialVentasPage() {
                     <tr key={v.id} className="hover:bg-gray-50">
                       <td className="px-6 py-4 font-mono text-sm">{v.numero_factura}</td>
                       <td className="px-6 py-4 text-sm">
-                        {new Date(v.fecha_venta).toLocaleString('es-SV')}
+                        {formatearFechaSV(v.fecha_venta)}
                       </td>
                       <td className="px-6 py-4">{v.cliente?.nombre || 'Cliente Mostrador'}</td>
                       <td className="px-6 py-4 font-bold text-[#003366]">${v.total.toFixed(2)}</td>
@@ -511,7 +526,7 @@ export default function HistorialVentasPage() {
         </div>
         <p className="mt-4 text-sm text-gray-500">Total: {ventasFiltradas.length} venta(s)</p>
       </main>
- 
+
       {showModal && selectedVenta && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -527,7 +542,7 @@ export default function HistorialVentasPage() {
                 </div>
                 <div>
                   <p className="text-xs text-gray-500">Fecha</p>
-                  <p>{new Date(selectedVenta.fecha_venta).toLocaleString('es-SV')}</p>
+                  <p>{formatearFechaSV(selectedVenta.fecha_venta)}</p>
                 </div>
                 <div>
                   <p className="text-xs text-gray-500">Cliente</p>
