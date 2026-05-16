@@ -1,26 +1,26 @@
 'use client'
-
+ 
 import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import { Search, Eye, Printer } from 'lucide-react'
-
+ 
 interface ClienteInfo {
   nombre: string
   numero_documento: string
   tipo_documento: string
 }
-
+ 
 interface UsuarioInfo {
   nombre_completo: string
 }
-
+ 
 interface ProductoDetalle {
   nombre: string
   talla: string
   color: string
 }
-
+ 
 interface Venta {
   id: string
   numero_factura: string
@@ -33,7 +33,7 @@ interface Venta {
   cliente: ClienteInfo | null
   usuario: UsuarioInfo | null
 }
-
+ 
 interface DetalleVenta {
   id: string
   cantidad: number
@@ -41,7 +41,28 @@ interface DetalleVenta {
   subtotal: number
   producto: ProductoDetalle | null
 }
-
+ 
+interface ItemTicket {
+  cantidad: number
+  precio_unitario: number
+  producto: ProductoDetalle | null
+}
+ 
+// ✅ FIX 1: Tipos raw que devuelve Supabase (producto como array)
+interface DetalleRaw {
+  id: string
+  cantidad: number
+  precio_unitario: number
+  subtotal: number
+  producto: ProductoDetalle[]
+}
+ 
+interface ItemTicketRaw {
+  cantidad: number
+  precio_unitario: number
+  producto: ProductoDetalle[]
+}
+ 
 interface VentaRaw {
   id: string
   numero_factura: string
@@ -51,24 +72,14 @@ interface VentaRaw {
   metodo_pago: string
   estado: string
   id_cliente: string | null
-  cliente: ClienteInfo[] | null
-  usuario: UsuarioInfo[] | null
+  cliente: ClienteInfo[]
+  usuario: UsuarioInfo[]
 }
-
-interface DetalleRaw {
-  id: string
-  cantidad: number
-  precio_unitario: number
-  subtotal: number
-  producto: ProductoDetalle[] | null
-}
-
-interface ItemTicket {
-  cantidad: number
-  precio_unitario: number
-  producto: ProductoDetalle | null
-}
-
+ 
+type ClienteResponse = ClienteInfo | ClienteInfo[] | null
+type UsuarioResponse = UsuarioInfo | UsuarioInfo[] | null
+type ProductoResponse = ProductoDetalle | ProductoDetalle[] | null
+ 
 export default function HistorialVentasPage() {
   const [ventas, setVentas] = useState<Venta[]>([])
   const [loading, setLoading] = useState(true)
@@ -80,7 +91,7 @@ export default function HistorialVentasPage() {
   const [showModal, setShowModal] = useState(false)
   const [autorizado, setAutorizado] = useState(false)
   const router = useRouter()
-
+ 
   const verificarRol = useCallback(async () => {
     const { data: { session } } = await supabase.auth.getSession()
     if (!session) {
@@ -98,14 +109,35 @@ export default function HistorialVentasPage() {
     }
     return true
   }, [router])
-
+ 
   const verificarSesion = useCallback(async () => {
     const { data } = await supabase.auth.getSession()
     if (!data.session) {
       router.push('/login')
     }
   }, [router])
-
+ 
+  const obtenerClienteData = (cliente: ClienteResponse): ClienteInfo | null => {
+    if (!cliente) return null
+    if (Array.isArray(cliente) && cliente.length > 0) return cliente[0]
+    if (!Array.isArray(cliente)) return cliente
+    return null
+  }
+ 
+  const obtenerUsuarioData = (usuario: UsuarioResponse): UsuarioInfo | null => {
+    if (!usuario) return null
+    if (Array.isArray(usuario) && usuario.length > 0) return usuario[0]
+    if (!Array.isArray(usuario)) return usuario
+    return null
+  }
+ 
+  const obtenerProductoData = (producto: ProductoResponse): ProductoDetalle | null => {
+    if (!producto) return null
+    if (Array.isArray(producto) && producto.length > 0) return producto[0]
+    if (!Array.isArray(producto)) return producto
+    return null
+  }
+ 
   const cargarVentas = useCallback(async () => {
     setLoading(true)
     try {
@@ -120,41 +152,42 @@ export default function HistorialVentasPage() {
           metodo_pago,
           estado,
           id_cliente,
-          cliente:clientes (nombre, numero_documento, tipo_documento),
-          usuario:usuarios (nombre_completo)
+          cliente:clientes!ventas_id_cliente_fkey (
+            nombre,
+            numero_documento,
+            tipo_documento
+          ),
+          usuario:usuarios!ventas_id_usuario_fkey (
+            nombre_completo
+          )
         `)
         .order('fecha_venta', { ascending: false })
-
+ 
       if (fechaInicio) {
         query = query.gte('fecha_venta', fechaInicio)
       }
       if (fechaFin) {
         query = query.lte('fecha_venta', `${fechaFin} 23:59:59`)
       }
-
+ 
       const { data, error } = await query
-
+ 
       if (error) throw error
-
-      const ventasFormateadas: Venta[] = (data || []).map((item: VentaRaw) => {
-        let clienteData = null
-        if (item.cliente && item.cliente.length > 0) {
-          clienteData = item.cliente[0]
-        }
-        return {
-          id: item.id,
-          numero_factura: item.numero_factura,
-          fecha_venta: item.fecha_venta,
-          total: item.total,
-          subtotal: item.subtotal,
-          metodo_pago: item.metodo_pago,
-          estado: item.estado,
-          id_cliente: item.id_cliente,
-          cliente: clienteData,
-          usuario: item.usuario?.[0] || null
-        }
-      })
-
+ 
+      // ✅ FIX 2: Reemplazar `any` por VentaRaw
+      const ventasFormateadas: Venta[] = (data || []).map((item: VentaRaw) => ({
+        id: item.id,
+        numero_factura: item.numero_factura,
+        fecha_venta: item.fecha_venta,
+        total: item.total,
+        subtotal: item.subtotal,
+        metodo_pago: item.metodo_pago,
+        estado: item.estado,
+        id_cliente: item.id_cliente,
+        cliente: obtenerClienteData(item.cliente),
+        usuario: obtenerUsuarioData(item.usuario)
+      }))
+ 
       setVentas(ventasFormateadas)
     } catch (error) {
       console.error('Error:', error)
@@ -162,7 +195,7 @@ export default function HistorialVentasPage() {
       setLoading(false)
     }
   }, [fechaInicio, fechaFin])
-
+ 
   useEffect(() => {
     const iniciar = async () => {
       const tieneAcceso = await verificarRol()
@@ -173,65 +206,80 @@ export default function HistorialVentasPage() {
     }
     iniciar()
   }, [verificarRol, verificarSesion, cargarVentas])
-
+ 
   const verDetalle = async (venta: Venta) => {
     setSelectedVenta(venta)
     setShowModal(true)
-
-    const { data } = await supabase
+ 
+    const { data, error } = await supabase
       .from('detalle_ventas')
       .select(`
         id,
         cantidad,
         precio_unitario,
         subtotal,
-        producto:productos (nombre, talla, color)
+        producto:productos!detalle_ventas_id_producto_fkey (
+          nombre,
+          talla,
+          color
+        )
       `)
       .eq('id_venta', venta.id)
-
+ 
+    if (error) {
+      console.error('Error al cargar detalles:', error)
+      return
+    }
+ 
     if (data) {
-      const detallesFormateados: DetalleVenta[] = (data as DetalleRaw[]).map((item) => ({
+      // ✅ FIX 3: Reemplazar `any` por DetalleRaw (incluye id y subtotal)
+      const detallesFormateados: DetalleVenta[] = (data as DetalleRaw[]).map((item: DetalleRaw) => ({
         id: item.id,
         cantidad: item.cantidad,
         precio_unitario: item.precio_unitario,
         subtotal: item.subtotal,
-        producto: item.producto?.[0] || null
+        producto: obtenerProductoData(item.producto)
       }))
       setDetalles(detallesFormateados)
     }
   }
-
+ 
   const reimprimirTicket = async (venta: Venta) => {
-    const { data: detallesData } = await supabase
+    const { data: detallesData, error } = await supabase
       .from('detalle_ventas')
       .select(`
         cantidad,
         precio_unitario,
-        producto:productos (nombre, talla, color)
+        producto:productos!detalle_ventas_id_producto_fkey (
+          nombre,
+          talla,
+          color
+        )
       `)
       .eq('id_venta', venta.id)
-
-    const items: ItemTicket[] = ((detallesData || []) as {
-      cantidad: number
-      precio_unitario: number
-      producto: ProductoDetalle[] | null
-    }[]).map((item) => ({
+ 
+    if (error) {
+      console.error('Error al cargar detalles:', error)
+      return
+    }
+ 
+    // ✅ FIX 4: Reemplazar `any` por ItemTicketRaw
+    const items: ItemTicket[] = (detallesData as ItemTicketRaw[] || []).map((item: ItemTicketRaw) => ({
       cantidad: item.cantidad,
       precio_unitario: item.precio_unitario,
-      producto: item.producto?.[0] || null
+      producto: obtenerProductoData(item.producto)
     }))
-
+ 
     const fechaOriginal = new Date(venta.fecha_venta).toLocaleString('es-SV')
     const total = venta.total || items.reduce((sum, item) => sum + (item.cantidad * item.precio_unitario), 0)
     
-    // Cálculo correcto del IVA en El Salvador
     const subtotalSinIVA = total / 1.13
     const ivaCalculado = total - subtotalSinIVA
-
+ 
     let clienteNombre = 'Cliente Mostrador'
     let clienteDocumento = ''
     let clienteTipo = ''
-
+ 
     if (venta.id_cliente) {
       const { data: clienteData } = await supabase
         .from('clientes')
@@ -249,7 +297,7 @@ export default function HistorialVentasPage() {
       clienteDocumento = venta.cliente.numero_documento || ''
       clienteTipo = venta.cliente.tipo_documento || ''
     }
-
+ 
     const htmlTicket = `
       <!DOCTYPE html>
       <html>
@@ -295,24 +343,24 @@ export default function HistorialVentasPage() {
       </body>
       </html>
     `
-
+ 
     const ventanaTicket = window.open('', '_blank', 'width=400,height=600')
     if (ventanaTicket) {
       ventanaTicket.document.write(htmlTicket)
       ventanaTicket.document.close()
     }
   }
-
+ 
   const handleLogout = async () => {
     await supabase.auth.signOut()
     router.push('/login')
   }
-
+ 
   const ventasFiltradas = ventas.filter(v =>
     v.numero_factura.toLowerCase().includes(search.toLowerCase()) ||
     v.cliente?.nombre?.toLowerCase().includes(search.toLowerCase())
   )
-
+ 
   if (!autorizado) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-100">
@@ -323,7 +371,7 @@ export default function HistorialVentasPage() {
       </div>
     )
   }
-
+ 
   return (
     <div className="min-h-screen bg-gray-100">
       <header className="bg-[#003366] shadow-lg sticky top-0 z-10">
@@ -346,30 +394,55 @@ export default function HistorialVentasPage() {
           </div>
         </div>
       </header>
-
+ 
       <main className="max-w-7xl mx-auto px-4 py-8">
         <h2 className="text-2xl font-bold text-[#003366] mb-6">📜 Historial de Ventas</h2>
-
+ 
         <div className="bg-white rounded-lg shadow p-4 mb-6">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
-              <input type="text" placeholder="Buscar por factura o cliente..." value={search} onChange={(e) => setSearch(e.target.value)} className="w-full pl-10 pr-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#003366]" />
+              <input
+                type="text"
+                placeholder="Buscar por factura o cliente..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#003366]"
+              />
             </div>
             <div>
               <label className="block text-xs text-gray-500 mb-1">Desde</label>
-              <input type="date" value={fechaInicio} onChange={(e) => setFechaInicio(e.target.value)} className="w-full px-3 py-2 border rounded-lg" />
+              <input
+                type="date"
+                value={fechaInicio}
+                onChange={(e) => setFechaInicio(e.target.value)}
+                className="w-full px-3 py-2 border rounded-lg"
+              />
             </div>
             <div>
               <label className="block text-xs text-gray-500 mb-1">Hasta</label>
-              <input type="date" value={fechaFin} onChange={(e) => setFechaFin(e.target.value)} className="w-full px-3 py-2 border rounded-lg" />
+              <input
+                type="date"
+                value={fechaFin}
+                onChange={(e) => setFechaFin(e.target.value)}
+                className="w-full px-3 py-2 border rounded-lg"
+              />
             </div>
             <div className="flex items-end">
-              <button onClick={() => { setFechaInicio(''); setFechaFin(''); setSearch(''); }} className="w-full bg-gray-200 text-gray-700 py-2 rounded-lg hover:bg-gray-300 transition">Limpiar filtros</button>
+              <button
+                onClick={() => {
+                  setFechaInicio('')
+                  setFechaFin('')
+                  setSearch('')
+                }}
+                className="w-full bg-gray-200 text-gray-700 py-2 rounded-lg hover:bg-gray-300 transition"
+              >
+                Limpiar filtros
+              </button>
             </div>
           </div>
         </div>
-
+ 
         <div className="bg-white rounded-lg shadow overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -386,22 +459,47 @@ export default function HistorialVentasPage() {
               </thead>
               <tbody className="divide-y divide-gray-200">
                 {loading ? (
-                  <tr><td colSpan={7} className="px-6 py-8 text-center">Cargando...None</td></tr>
+                  <tr>
+                    <td colSpan={7} className="px-6 py-8 text-center">Cargando...</td>
+                  </tr>
                 ) : ventasFiltradas.length === 0 ? (
-                  <tr><td colSpan={7} className="px-6 py-8 text-center text-gray-500">No hay ventas registradas</td></tr>
+                  <tr>
+                    <td colSpan={7} className="px-6 py-8 text-center text-gray-500">No hay ventas registradas</td>
+                  </tr>
                 ) : (
                   ventasFiltradas.map((v) => (
                     <tr key={v.id} className="hover:bg-gray-50">
                       <td className="px-6 py-4 font-mono text-sm">{v.numero_factura}</td>
-                      <td className="px-6 py-4 text-sm">{new Date(v.fecha_venta).toLocaleString('es-SV')}</td>
+                      <td className="px-6 py-4 text-sm">
+                        {new Date(v.fecha_venta).toLocaleString('es-SV')}
+                      </td>
                       <td className="px-6 py-4">{v.cliente?.nombre || 'Cliente Mostrador'}</td>
                       <td className="px-6 py-4 font-bold text-[#003366]">${v.total.toFixed(2)}</td>
-                      <td className="px-6 py-4">{v.metodo_pago === 'efectivo' ? '💵 Efectivo' : v.metodo_pago === 'tarjeta' ? '💳 Tarjeta' : '🏦 Transferencia'}</td>
-                      <td className="px-6 py-4"><span className={`px-2 py-1 rounded-full text-xs ${v.estado === 'completada' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>{v.estado === 'completada' ? 'Completada' : v.estado}</span></td>
+                      <td className="px-6 py-4">
+                        {v.metodo_pago === 'efectivo' ? '💵 Efectivo' :
+                         v.metodo_pago === 'tarjeta' ? '💳 Tarjeta' : '🏦 Transferencia'}
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className={`px-2 py-1 rounded-full text-xs ${v.estado === 'completada' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                          {v.estado === 'completada' ? 'Completada' : v.estado}
+                        </span>
+                      </td>
                       <td className="px-6 py-4">
                         <div className="flex gap-2">
-                          <button onClick={() => verDetalle(v)} className="text-blue-600 hover:text-blue-800" title="Ver detalle"><Eye size={18} /></button>
-                          <button onClick={() => reimprimirTicket(v)} className="text-green-600 hover:text-green-800" title="Reimprimir ticket"><Printer size={18} /></button>
+                          <button
+                            onClick={() => verDetalle(v)}
+                            className="text-blue-600 hover:text-blue-800"
+                            title="Ver detalle"
+                          >
+                            <Eye size={18} />
+                          </button>
+                          <button
+                            onClick={() => reimprimirTicket(v)}
+                            className="text-green-600 hover:text-green-800"
+                            title="Reimprimir ticket"
+                          >
+                            <Printer size={18} />
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -413,7 +511,7 @@ export default function HistorialVentasPage() {
         </div>
         <p className="mt-4 text-sm text-gray-500">Total: {ventasFiltradas.length} venta(s)</p>
       </main>
-
+ 
       {showModal && selectedVenta && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -423,12 +521,30 @@ export default function HistorialVentasPage() {
             </div>
             <div className="bg-gray-50 p-4 rounded-lg mb-4">
               <div className="grid grid-cols-2 gap-4">
-                <div><p className="text-xs text-gray-500">Factura</p><p className="font-mono font-bold">{selectedVenta.numero_factura}</p></div>
-                <div><p className="text-xs text-gray-500">Fecha</p><p>{new Date(selectedVenta.fecha_venta).toLocaleString('es-SV')}</p></div>
-                <div><p className="text-xs text-gray-500">Cliente</p><p>{selectedVenta.cliente?.nombre || 'Cliente Mostrador'}</p></div>
-                <div><p className="text-xs text-gray-500">Vendedor</p><p>{selectedVenta.usuario?.nombre_completo || 'Sistema'}</p></div>
-                <div><p className="text-xs text-gray-500">Método de pago</p><p>{selectedVenta.metodo_pago}</p></div>
-                <div><p className="text-xs text-gray-500">Total</p><p className="text-xl font-bold text-[#003366]">${selectedVenta.total.toFixed(2)}</p></div>
+                <div>
+                  <p className="text-xs text-gray-500">Factura</p>
+                  <p className="font-mono font-bold">{selectedVenta.numero_factura}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-500">Fecha</p>
+                  <p>{new Date(selectedVenta.fecha_venta).toLocaleString('es-SV')}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-500">Cliente</p>
+                  <p>{selectedVenta.cliente?.nombre || 'Cliente Mostrador'}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-500">Vendedor</p>
+                  <p>{selectedVenta.usuario?.nombre_completo || 'Sistema'}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-500">Método de pago</p>
+                  <p>{selectedVenta.metodo_pago}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-500">Total</p>
+                  <p className="text-xl font-bold text-[#003366]">${selectedVenta.total.toFixed(2)}</p>
+                </div>
               </div>
             </div>
             <h4 className="font-bold mb-3">Productos</h4>
@@ -464,10 +580,16 @@ export default function HistorialVentasPage() {
               </table>
             </div>
             <div className="flex gap-3 mt-4">
-              <button onClick={() => reimprimirTicket(selectedVenta)} className="flex-1 bg-green-600 text-white py-2 rounded-lg hover:bg-green-700 flex items-center justify-center gap-2">
+              <button
+                onClick={() => reimprimirTicket(selectedVenta)}
+                className="flex-1 bg-green-600 text-white py-2 rounded-lg hover:bg-green-700 flex items-center justify-center gap-2"
+              >
                 <Printer size={18} /> Reimprimir Ticket
               </button>
-              <button onClick={() => setShowModal(false)} className="flex-1 border border-gray-300 py-2 rounded-lg hover:bg-gray-50">
+              <button
+                onClick={() => setShowModal(false)}
+                className="flex-1 border border-gray-300 py-2 rounded-lg hover:bg-gray-50"
+              >
                 Cerrar
               </button>
             </div>
