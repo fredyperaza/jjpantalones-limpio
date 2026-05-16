@@ -99,45 +99,27 @@ export default function NuevaVentaPage() {
 
   const clienteSeleccionado = clienteId ? clientes.find(c => c.id === clienteId) || null : null
 
-  const calcularSubtotal = () => {
-    return carrito.reduce((sum, item) => sum + item.subtotal, 0)
-  }
+  // Calcular totales correctamente (el precio ya incluye IVA)
+  const total = carrito.reduce((sum, item) => sum + (item.cantidad * item.precio), 0)
 
-  const calcularIVA = () => {
-    return calcularSubtotal() * 0.13
-  }
-
-  const calcularTotal = () => {
-    return calcularSubtotal() + calcularIVA()
-  }
-
-  const subtotal = calcularSubtotal()
-  const iva = calcularIVA()
-  const total = calcularTotal()
-
-  // ✅ IMPORTANTE: Esta función llama a Supabase
- const generarNumeroFactura = useCallback(async () => {
-  try {
-    console.log('Llamando a supabase.rpc...')
-    const { data, error } = await supabase.rpc('siguiente_numero_factura')
-    console.log('Respuesta de Supabase:', { data, error })
-    
-    if (error) {
-      console.error('Error de Supabase:', error)
+  // Generar número de factura secuencial
+  const generarNumeroFactura = useCallback(async () => {
+    try {
+      const { data, error } = await supabase.rpc('siguiente_numero_factura')
+      if (error) {
+        console.error('Error de Supabase:', error)
+        return `FAC-${Date.now()}`
+      }
+      if (!data) {
+        console.error('No se recibió data')
+        return `FAC-${Date.now()}`
+      }
+      return data
+    } catch (error) {
+      console.error('Error en try-catch:', error)
       return `FAC-${Date.now()}`
     }
-    
-    if (!data) {
-      console.error('No se recibió data')
-      return `FAC-${Date.now()}`
-    }
-    
-    return data
-  } catch (error) {
-    console.error('Error en try-catch:', error)
-    return `FAC-${Date.now()}`
-  }
-}, [])
+  }, [])
 
   useEffect(() => {
     const iniciar = async () => {
@@ -206,8 +188,12 @@ export default function NuevaVentaPage() {
     setCarrito(carrito.filter(item => item.id !== id))
   }
 
-  const imprimirTicket = (factura: string, cliente: Cliente | null, carritoItems: ItemCarrito[], subtotalVal: number, ivaVal: number, totalVal: number, pagoMetodo: string) => {
+  const imprimirTicket = (factura: string, cliente: Cliente | null, carritoItems: ItemCarrito[], totalVal: number, pagoMetodo: string) => {
     const fecha = new Date().toLocaleString('es-SV')
+    // Cálculo correcto del IVA
+    const subtotalSinIVA = totalVal / 1.13
+    const ivaCalculado = totalVal - subtotalSinIVA
+    
     const itemsHtml = carritoItems.map(item => `
       <div>${item.cantidad}x ${item.nombre} (${item.talla}/${item.color}) - $${(item.cantidad * item.precio).toFixed(2)}</div>
     `).join('')
@@ -227,7 +213,9 @@ export default function NuevaVentaPage() {
           <hr/>
           ${itemsHtml}
           <hr/>
-          <p>SUBTOTAL: $${subtotalVal.toFixed(2)}<br/>IVA (13%): $${ivaVal.toFixed(2)}<br/><strong>TOTAL: $${totalVal.toFixed(2)}</strong></p>
+          <p>SUBTOTAL: $${subtotalSinIVA.toFixed(2)}</p>
+          <p>IVA (13%): $${ivaCalculado.toFixed(2)}</p>
+          <p><strong>TOTAL: $${totalVal.toFixed(2)}</strong></p>
           <hr/>
           <p>MÉTODO DE PAGO: ${pagoMetodo === 'efectivo' ? '💵 Efectivo' : pagoMetodo === 'tarjeta' ? '💳 Tarjeta' : '🏦 Transferencia'}</p>
           <hr/>
@@ -271,7 +259,6 @@ export default function NuevaVentaPage() {
         }
       }
 
-      // ✅ Usar la función secuencial
       const factura = await generarNumeroFactura()
       console.log('Factura generada:', factura)
       
@@ -281,9 +268,9 @@ export default function NuevaVentaPage() {
           numero_factura: factura,
           id_cliente: clienteFinal || null,
           id_usuario: user.id,
-          subtotal: subtotal,
+          subtotal: total,
           descuento: 0,
-          impuesto: iva,
+          impuesto: 0,
           total: total,
           metodo_pago: metodoPago,
           estado: 'completada'
@@ -302,7 +289,7 @@ export default function NuevaVentaPage() {
         })
       }
 
-      imprimirTicket(factura, clienteInfo, carrito, subtotal, iva, total, metodoPago)
+      imprimirTicket(factura, clienteInfo, carrito, total, metodoPago)
       
       setTimeout(() => {
         setCarrito([])
@@ -402,9 +389,7 @@ export default function NuevaVentaPage() {
                 ))}
               </div>
               <div className="border-t pt-3 mt-3">
-                <div className="flex justify-between"><span>Subtotal:</span><span>${subtotal.toFixed(2)}</span></div>
-                <div className="flex justify-between"><span>IVA (13%):</span><span>${iva.toFixed(2)}</span></div>
-                <div className="flex justify-between text-lg font-bold mt-2 pt-2 border-t"><span>Total:</span><span className="text-[#003366]">${total.toFixed(2)}</span></div>
+                <div className="flex justify-between"><span>TOTAL:</span><span className="text-[#003366] font-bold text-xl">${total.toFixed(2)}</span></div>
               </div>
               <button onClick={finalizarVenta} disabled={loading || carrito.length === 0} className="mt-4 w-full bg-[#003366] text-white py-3 rounded-lg hover:bg-[#002244] disabled:opacity-50 flex items-center justify-center gap-2"><Printer size={18} />{loading ? 'Procesando...' : 'Finalizar Venta'}</button>
             </div>

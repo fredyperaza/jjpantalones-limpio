@@ -224,7 +224,9 @@ export default function HistorialVentasPage() {
     const fechaOriginal = new Date(venta.fecha_venta).toLocaleString('es-SV')
     const total = venta.total || items.reduce((sum, item) => sum + (item.cantidad * item.precio_unitario), 0)
     
-    const ivaIncluido = total - (total / 1.13)
+    // Cálculo correcto del IVA en El Salvador
+    const subtotalSinIVA = total / 1.13
+    const ivaCalculado = total - subtotalSinIVA
 
     let clienteNombre = 'Cliente Mostrador'
     let clienteDocumento = ''
@@ -279,8 +281,10 @@ export default function HistorialVentasPage() {
             <div class="info-row"><span>${item.cantidad}x ${item.producto?.nombre || 'Producto'} (${item.producto?.talla || ''}/${item.producto?.color || ''})</span><span>$${(item.cantidad * item.precio_unitario).toFixed(2)}</span></div>
           `).join('')}
           <div class="line"></div>
-          <div class="info-row"><span>TOTAL:</span><span><strong>$${total.toFixed(2)}</strong></span></div>
-          <div class="info-row"><span style="font-size: 10px;">(IVA 13% incluido: $${ivaIncluido.toFixed(2)})</span><span></span></div>
+          <div class="info-row"><span>SUBTOTAL:</span><span>$${subtotalSinIVA.toFixed(2)}</span></div>
+          <div class="info-row"><span>IVA (13%):</span><span>$${ivaCalculado.toFixed(2)}</span></div>
+          <div class="line-solid"></div>
+          <div class="info-row total"><span>TOTAL:</span><span><strong>$${total.toFixed(2)}</strong></span></div>
           <div class="line"></div>
           <div class="info-row"><span>MÉTODO DE PAGO:</span><span>${venta.metodo_pago === 'efectivo' ? '💵 Efectivo' : venta.metodo_pago === 'tarjeta' ? '💳 Tarjeta' : '🏦 Transferencia'}</span></div>
           <div class="line"></div>
@@ -382,7 +386,7 @@ export default function HistorialVentasPage() {
               </thead>
               <tbody className="divide-y divide-gray-200">
                 {loading ? (
-                  <tr><td colSpan={7} className="px-6 py-8 text-center">Cargando...</td></tr>
+                  <tr><td colSpan={7} className="px-6 py-8 text-center">Cargando...None</td></tr>
                 ) : ventasFiltradas.length === 0 ? (
                   <tr><td colSpan={7} className="px-6 py-8 text-center text-gray-500">No hay ventas registradas</td></tr>
                 ) : (
@@ -399,8 +403,8 @@ export default function HistorialVentasPage() {
                           <button onClick={() => verDetalle(v)} className="text-blue-600 hover:text-blue-800" title="Ver detalle"><Eye size={18} /></button>
                           <button onClick={() => reimprimirTicket(v)} className="text-green-600 hover:text-green-800" title="Reimprimir ticket"><Printer size={18} /></button>
                         </div>
-                       </td>
-                     </tr>
+                      </td>
+                    </tr>
                   ))
                 )}
               </tbody>
@@ -444,7 +448,7 @@ export default function HistorialVentasPage() {
                       <td className="px-4 py-2 text-sm">
                         {d.producto?.nombre || 'Producto no disponible'}
                         {d.producto?.talla && <span className="text-xs text-gray-500 ml-1">({d.producto.talla}/{d.producto.color})</span>}
-                       </td>
+                      </td>
                       <td className="px-4 py-2 text-center text-sm">{d.cantidad}</td>
                       <td className="px-4 py-2 text-right text-sm">${d.precio_unitario.toFixed(2)}</td>
                       <td className="px-4 py-2 text-right text-sm">${d.subtotal.toFixed(2)}</td>
