@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
-import { Search, ShoppingCart, Printer } from 'lucide-react'
+import { Search, ShoppingCart, Printer, MessageCircle } from 'lucide-react'
 
 interface Producto {
   id: string
@@ -121,6 +121,52 @@ export default function NuevaVentaPage() {
     }
   }, [])
 
+  // ============================================
+  // FUNCIÓN PARA ENVIAR TICKET POR WHATSAPP
+  // ============================================
+  const enviarPorWhatsApp = (cliente: Cliente | null, factura: string, totalVal: number, items: ItemCarrito[], pagoMetodo: string) => {
+    if (!cliente?.telefono) {
+      alert('El cliente no tiene número de teléfono registrado. Agregue un teléfono al cliente para usar WhatsApp.')
+      return false
+    }
+    
+    // Limpiar el número de teléfono
+    let telefono = cliente.telefono.replace(/[^0-9]/g, '')
+    
+    // Si el número no tiene código de país, agregar 503 (El Salvador)
+    if (!telefono.startsWith('503') && telefono.length <= 8) {
+      telefono = `503${telefono}`
+    }
+    
+    // Calcular subtotal e IVA
+    const subtotalSinIVA = totalVal / 1.13
+    const ivaCalculado = totalVal - subtotalSinIVA
+    
+    // Crear mensaje con los datos de la venta
+    const productosTexto = items.map(item => 
+      `• ${item.cantidad}x ${item.nombre} (${item.talla}/${item.color}) - $${(item.cantidad * item.precio).toFixed(2)}`
+    ).join('\n')
+    
+    const mensaje = `*JJPANTALONES - TICKET DE COMPRA*\n\n` +
+      `*Factura:* ${factura}\n` +
+      `*Fecha:* ${new Date().toLocaleString('es-SV')}\n` +
+      `*Cliente:* ${cliente.nombre}\n` +
+      `*Documento:* ${cliente.tipo_documento}: ${cliente.numero_documento || 'N/A'}\n\n` +
+      `*PRODUCTOS:*\n${productosTexto}\n\n` +
+      `*Subtotal:* $${subtotalSinIVA.toFixed(2)}\n` +
+      `*IVA (13%):* $${ivaCalculado.toFixed(2)}\n` +
+      `*TOTAL:* $${totalVal.toFixed(2)}\n\n` +
+      `*Método de pago:* ${pagoMetodo === 'efectivo' ? '💵 Efectivo' : pagoMetodo === 'tarjeta' ? '💳 Tarjeta' : '🏦 Transferencia'}\n\n` +
+      `¡Gracias por su compra! Visítenos nuevamente.`
+    
+    // Crear link de WhatsApp
+    const url = `https://wa.me/${telefono}?text=${encodeURIComponent(mensaje)}`
+    
+    // Abrir WhatsApp en nueva ventana
+    window.open(url, '_blank')
+    return true
+  }
+
   useEffect(() => {
     const iniciar = async () => {
       const tieneAcceso = await verificarRol()
@@ -220,8 +266,9 @@ export default function NuevaVentaPage() {
           <p>MÉTODO DE PAGO: ${pagoMetodo === 'efectivo' ? '💵 Efectivo' : pagoMetodo === 'tarjeta' ? '💳 Tarjeta' : '🏦 Transferencia'}</p>
           <hr/>
           <p>¡Gracias por su compra!</p>
+          <button onclick="window.close()" style="margin-top: 10px; padding: 5px 10px;">Cerrar</button>
         </div>
-        <script>window.print();setTimeout(() => window.close(), 1000);</script>
+        <script>window.print();</script>
       </body>
       </html>
     `
@@ -290,6 +337,16 @@ export default function NuevaVentaPage() {
       }
 
       imprimirTicket(factura, clienteInfo, carrito, total, metodoPago)
+      
+      // Preguntar si desea enviar por WhatsApp
+      if (clienteInfo && clienteInfo.telefono) {
+        const enviarWhats = confirm('¿Desea enviar el ticket por WhatsApp al cliente?')
+        if (enviarWhats) {
+          enviarPorWhatsApp(clienteInfo, factura, total, carrito, metodoPago)
+        }
+      } else if (clienteInfo && !clienteInfo.telefono) {
+        alert('El cliente no tiene número de teléfono. No se puede enviar por WhatsApp.')
+      }
       
       setTimeout(() => {
         setCarrito([])
@@ -367,6 +424,20 @@ export default function NuevaVentaPage() {
                   {clientes.map((c) => (<option key={c.id} value={c.id}>{c.nombre}</option>))}
                 </select>
               </div>
+              
+              {/* Botón de WhatsApp para enviar ticket manualmente (antes de finalizar) */}
+              {clienteSeleccionado && clienteSeleccionado.telefono && carrito.length > 0 && (
+                <button
+                  onClick={() => {
+                    const facturaTemp = `PENDIENTE-${Date.now()}`
+                    enviarPorWhatsApp(clienteSeleccionado, facturaTemp, total, carrito, metodoPago)
+                  }}
+                  className="mb-4 w-full bg-green-600 text-white py-2 rounded-lg hover:bg-green-700 transition flex items-center justify-center gap-2"
+                >
+                  <MessageCircle size={18} /> Enviar Carrito por WhatsApp
+                </button>
+              )}
+              
               <div className="mb-4">
                 <label className="block text-sm font-medium mb-1">Método de pago</label>
                 <select value={metodoPago} onChange={(e) => setMetodoPago(e.target.value)} className="w-full px-3 py-2 border rounded-lg">
