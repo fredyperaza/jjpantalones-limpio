@@ -3,9 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
-import { Search, ShoppingCart, Printer, MessageCircle, Download } from 'lucide-react'
-import jsPDF from 'jspdf'
-import html2canvas from 'html2canvas'
+import { Search, ShoppingCart, Printer } from 'lucide-react'
 
 interface Producto {
   id: string
@@ -31,7 +29,6 @@ interface Cliente {
   id: string
   nombre: string
   telefono: string
-  email: string
   numero_documento: string
   tipo_documento: string
 }
@@ -45,12 +42,9 @@ export default function NuevaVentaPage() {
   const [metodoPago, setMetodoPago] = useState('efectivo')
   const [loading, setLoading] = useState(false)
   const [autorizado, setAutorizado] = useState(false)
-  const [ultimaFactura, setUltimaFactura] = useState('')
-  const [ultimoCliente, setUltimoCliente] = useState<Cliente | null>(null)
   const router = useRouter()
   
   const nextIdRef = useRef(1)
-  const ticketRef = useRef<HTMLDivElement>(null)
 
   const verificarRol = useCallback(async () => {
     const { data: { session } } = await supabase.auth.getSession()
@@ -98,15 +92,17 @@ export default function NuevaVentaPage() {
   const cargarClientes = useCallback(async () => {
     const { data } = await supabase
       .from('clientes')
-      .select('id, nombre, telefono, email, numero_documento, tipo_documento')
+      .select('id, nombre, telefono, numero_documento, tipo_documento')
       .limit(50)
     setClientes(data || [])
   }, [])
 
   const clienteSeleccionado = clienteId ? clientes.find(c => c.id === clienteId) || null : null
 
+  // Calcular totales correctamente (el precio ya incluye IVA)
   const total = carrito.reduce((sum, item) => sum + (item.cantidad * item.precio), 0)
 
+  // Generar número de factura secuencial
   const generarNumeroFactura = useCallback(async () => {
     try {
       const { data, error } = await supabase.rpc('siguiente_numero_factura')
@@ -124,208 +120,6 @@ export default function NuevaVentaPage() {
       return `FAC-${Date.now()}`
     }
   }, [])
-
-  // ============================================
-  // FUNCIÓN PARA GENERAR PDF DEL TICKET
-  // ============================================
-  const generarPDF = async (factura: string, cliente: Cliente | null, items: ItemCarrito[], totalVal: number, pagoMetodo: string) => {
-    const subtotalSinIVA = totalVal / 1.13
-    const ivaCalculado = totalVal - subtotalSinIVA
-    const fecha = new Date().toLocaleString('es-SV')
-    
-    // Crear elemento temporal para el ticket
-    const ticketElement = document.createElement('div')
-    ticketElement.style.width = '350px'
-    ticketElement.style.padding = '20px'
-    ticketElement.style.backgroundColor = 'white'
-    ticketElement.style.fontFamily = 'monospace'
-    ticketElement.style.fontSize = '12px'
-    ticketElement.innerHTML = `
-      <div style="text-align: center; border-bottom: 1px dashed #000; padding-bottom: 10px; margin-bottom: 10px;">
-        <h2 style="margin: 0; color: #003366;">JJPantalones</h2>
-        <p style="margin: 5px 0;">Pantalones por Mayoreo</p>
-        <p style="margin: 2px 0;">El Salvador 🇸🇻</p>
-        <p style="margin: 2px 0;">NIT: 0614-123456-789-0</p>
-      </div>
-      
-      <div style="margin-bottom: 10px;">
-        <div style="display: flex; justify-content: space-between;">
-          <span>FACTURA:</span>
-          <span><strong>${factura}</strong></span>
-        </div>
-        <div style="display: flex; justify-content: space-between;">
-          <span>FECHA:</span>
-          <span>${fecha}</span>
-        </div>
-        <div style="display: flex; justify-content: space-between;">
-          <span>CAJA:</span>
-          <span>Principal</span>
-        </div>
-      </div>
-      
-      <div style="border-top: 1px dashed #000; border-bottom: 1px dashed #000; padding: 10px 0; margin-bottom: 10px;">
-        <div style="display: flex; justify-content: space-between;">
-          <span>CLIENTE:</span>
-          <span><strong>${cliente?.nombre || 'Cliente Mostrador'}</strong></span>
-        </div>
-        ${cliente?.numero_documento ? `
-        <div style="display: flex; justify-content: space-between;">
-          <span>DOCUMENTO:</span>
-          <span>${cliente.tipo_documento}: ${cliente.numero_documento}</span>
-        </div>
-        ` : ''}
-        ${cliente?.telefono ? `
-        <div style="display: flex; justify-content: space-between;">
-          <span>TELÉFONO:</span>
-          <span>${cliente.telefono}</span>
-        </div>
-        ` : ''}
-      </div>
-      
-      <div style="margin-bottom: 10px;">
-        <div style="display: flex; justify-content: space-between; font-weight: bold; border-bottom: 1px solid #000; padding-bottom: 5px; margin-bottom: 5px;">
-          <span>PRODUCTO</span>
-          <span>SUB TOTAL</span>
-        </div>
-        ${items.map(item => `
-          <div style="margin-bottom: 5px;">
-            <div>${item.cantidad}x ${item.nombre} (${item.talla}/${item.color})</div>
-            <div style="text-align: right;">$${(item.cantidad * item.precio).toFixed(2)}</div>
-          </div>
-        `).join('')}
-      </div>
-      
-      <div style="border-top: 1px dashed #000; padding-top: 10px; margin-top: 10px;">
-        <div style="display: flex; justify-content: space-between;">
-          <span>SUBTOTAL:</span>
-          <span>$${subtotalSinIVA.toFixed(2)}</span>
-        </div>
-        <div style="display: flex; justify-content: space-between;">
-          <span>IVA (13%):</span>
-          <span>$${ivaCalculado.toFixed(2)}</span>
-        </div>
-        <div style="display: flex; justify-content: space-between; font-weight: bold; font-size: 14px; margin-top: 5px; padding-top: 5px; border-top: 1px solid #000;">
-          <span>TOTAL:</span>
-          <span>$${totalVal.toFixed(2)}</span>
-        </div>
-      </div>
-      
-      <div style="border-top: 1px dashed #000; padding-top: 10px; margin-top: 10px;">
-        <div style="display: flex; justify-content: space-between;">
-          <span>MÉTODO DE PAGO:</span>
-          <span>${pagoMetodo === 'efectivo' ? '💵 Efectivo' : pagoMetodo === 'tarjeta' ? '💳 Tarjeta' : '🏦 Transferencia'}</span>
-        </div>
-      </div>
-      
-      <div style="text-align: center; margin-top: 15px; padding-top: 10px; border-top: 1px dashed #000;">
-        <p>¡Gracias por su compra!</p>
-        <p style="font-size: 10px;">Visítenos nuevamente</p>
-      </div>
-    `
-    
-    document.body.appendChild(ticketElement)
-    
-    try {
-      const canvas = await html2canvas(ticketElement, {
-        scale: 2,
-        backgroundColor: '#ffffff'
-      })
-      const imgData = canvas.toDataURL('image/png')
-      const pdf = new jsPDF({
-        unit: 'mm',
-        format: 'a4',
-        orientation: 'portrait'
-      })
-      const imgWidth = 190
-      const imgHeight = (canvas.height * imgWidth) / canvas.width
-      pdf.addImage(imgData, 'PNG', 10, 10, imgWidth, imgHeight)
-      pdf.save(`Ticket_${factura}.pdf`)
-    } catch (error) {
-      console.error('Error al generar PDF:', error)
-      alert('Error al generar el PDF')
-    } finally {
-      document.body.removeChild(ticketElement)
-    }
-  }
-
-  // ============================================
-  // FUNCIÓN PARA ENVIAR PDF POR WHATSAPP
-  // ============================================
-  const enviarPDFporWhatsApp = async (cliente: Cliente | null, factura: string, totalVal: number, items: ItemCarrito[], pagoMetodo: string) => {
-    if (!cliente?.telefono) {
-      alert('El cliente no tiene número de teléfono registrado.')
-      return false
-    }
-    
-    // Primero generar el PDF
-    const subtotalSinIVA = totalVal / 1.13
-    const ivaCalculado = totalVal - subtotalSinIVA
-    const fecha = new Date().toLocaleString('es-SV')
-    
-    const ticketElement = document.createElement('div')
-    ticketElement.style.width = '350px'
-    ticketElement.style.padding = '20px'
-    ticketElement.style.backgroundColor = 'white'
-    ticketElement.style.fontFamily = 'monospace'
-    ticketElement.style.fontSize = '12px'
-    ticketElement.innerHTML = `
-      <div style="text-align: center; border-bottom: 1px dashed #000; padding-bottom: 10px; margin-bottom: 10px;">
-        <h2 style="margin: 0; color: #003366;">JJPantalones</h2>
-        <p>Pantalones por Mayoreo | El Salvador 🇸🇻</p>
-        <p>NIT: 0614-123456-789-0</p>
-      </div>
-      <div><strong>FACTURA:</strong> ${factura}</div>
-      <div><strong>FECHA:</strong> ${fecha}</div>
-      <div><strong>CLIENTE:</strong> ${cliente?.nombre || 'Cliente Mostrador'}</div>
-      ${cliente?.numero_documento ? `<div><strong>DOCUMENTO:</strong> ${cliente.tipo_documento}: ${cliente.numero_documento}</div>` : ''}
-      <div style="border-top: 1px dashed #000; margin: 10px 0;"></div>
-      ${items.map(item => `<div>${item.cantidad}x ${item.nombre} (${item.talla}/${item.color}) - $${(item.cantidad * item.precio).toFixed(2)}</div>`).join('')}
-      <div style="border-top: 1px dashed #000; margin: 10px 0;"></div>
-      <div><strong>SUBTOTAL:</strong> $${subtotalSinIVA.toFixed(2)}</div>
-      <div><strong>IVA (13%):</strong> $${ivaCalculado.toFixed(2)}</div>
-      <div><strong>TOTAL:</strong> $${totalVal.toFixed(2)}</div>
-      <div><strong>MÉTODO DE PAGO:</strong> ${pagoMetodo === 'efectivo' ? 'Efectivo' : pagoMetodo === 'tarjeta' ? 'Tarjeta' : 'Transferencia'}</div>
-      <div style="border-top: 1px dashed #000; margin: 10px 0;"></div>
-      <div>¡Gracias por su compra!</div>
-    `
-    
-    document.body.appendChild(ticketElement)
-    
-    try {
-      const canvas = await html2canvas(ticketElement, { scale: 2, backgroundColor: '#ffffff' })
-      const imgData = canvas.toDataURL('image/png')
-      
-      // Crear mensaje con link para descargar (WhatsApp no permite enviar archivos directamente sin API)
-      const mensaje = `*JJPANTALONES - TICKET DE COMPRA*\n\n` +
-        `Factura: ${factura}\n` +
-        `Cliente: ${cliente?.nombre}\n` +
-        `Total: $${totalVal.toFixed(2)}\n\n` +
-        `Puede descargar su ticket en el siguiente enlace:\n` +
-        `(El PDF se generará al hacer clic en "Descargar Ticket" en el sistema)\n\n` +
-        `¡Gracias por su compra!`
-      
-      let telefono = cliente.telefono.replace(/[^0-9]/g, '')
-      if (!telefono.startsWith('503') && telefono.length <= 8) {
-        telefono = `503${telefono}`
-      }
-      
-      const url = `https://wa.me/${telefono}?text=${encodeURIComponent(mensaje)}`
-      window.open(url, '_blank')
-      
-      // También ofrecer descargar el PDF
-      const pdf = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' })
-      const imgWidth = 190
-      const imgHeight = (canvas.height * imgWidth) / canvas.width
-      pdf.addImage(imgData, 'PNG', 10, 10, imgWidth, imgHeight)
-      pdf.save(`Ticket_${factura}.pdf`)
-      
-    } catch (error) {
-      console.error('Error:', error)
-    } finally {
-      document.body.removeChild(ticketElement)
-    }
-    return true
-  }
 
   useEffect(() => {
     const iniciar = async () => {
@@ -394,6 +188,50 @@ export default function NuevaVentaPage() {
     setCarrito(carrito.filter(item => item.id !== id))
   }
 
+  const imprimirTicket = (factura: string, cliente: Cliente | null, carritoItems: ItemCarrito[], totalVal: number, pagoMetodo: string) => {
+    const fecha = new Date().toLocaleString('es-SV')
+    // Cálculo correcto del IVA
+    const subtotalSinIVA = totalVal / 1.13
+    const ivaCalculado = totalVal - subtotalSinIVA
+    
+    const itemsHtml = carritoItems.map(item => `
+      <div>${item.cantidad}x ${item.nombre} (${item.talla}/${item.color}) - $${(item.cantidad * item.precio).toFixed(2)}</div>
+    `).join('')
+    
+    const html = `
+      <html>
+      <head><title>Ticket ${factura}</title></head>
+      <body style="font-family: monospace; width: 300px; margin: 0 auto;">
+        <div style="text-align: center;">
+          <h2>JJPantalones</h2>
+          <p>Pantalones por Mayoreo<br/>El Salvador 🇸🇻<br/>NIT: 0614-123456-789-0</p>
+          <hr/>
+          <p>FACTURA: ${factura}<br/>FECHA: ${fecha}<br/>CAJA: Principal</p>
+          <hr/>
+          <p>CLIENTE: ${cliente?.nombre || 'Cliente Mostrador'}</p>
+          ${cliente?.numero_documento ? `<p>DOCUMENTO: ${cliente.tipo_documento}: ${cliente.numero_documento}</p>` : ''}
+          <hr/>
+          ${itemsHtml}
+          <hr/>
+          <p>SUBTOTAL: $${subtotalSinIVA.toFixed(2)}</p>
+          <p>IVA (13%): $${ivaCalculado.toFixed(2)}</p>
+          <p><strong>TOTAL: $${totalVal.toFixed(2)}</strong></p>
+          <hr/>
+          <p>MÉTODO DE PAGO: ${pagoMetodo === 'efectivo' ? '💵 Efectivo' : pagoMetodo === 'tarjeta' ? '💳 Tarjeta' : '🏦 Transferencia'}</p>
+          <hr/>
+          <p>¡Gracias por su compra!</p>
+        </div>
+        <script>window.print();setTimeout(() => window.close(), 1000);</script>
+      </body>
+      </html>
+    `
+    const ventana = window.open('', '_blank', 'width=400,height=600')
+    if (ventana) {
+      ventana.document.write(html)
+      ventana.document.close()
+    }
+  }
+
   const finalizarVenta = async () => {
     if (carrito.length === 0) {
       alert('Agregue productos al carrito')
@@ -412,7 +250,7 @@ export default function NuevaVentaPage() {
       if (!clienteFinal) {
         const { data: mostrador } = await supabase
           .from('clientes')
-          .select('id, nombre, telefono, email, numero_documento, tipo_documento')
+          .select('id, nombre, telefono, numero_documento, tipo_documento')
           .eq('nombre', 'Cliente Mostrador')
           .single()
         if (mostrador) {
@@ -422,8 +260,7 @@ export default function NuevaVentaPage() {
       }
 
       const factura = await generarNumeroFactura()
-      setUltimaFactura(factura)
-      setUltimoCliente(clienteInfo)
+      console.log('Factura generada:', factura)
       
       const { data: venta, error: errorVenta } = await supabase
         .from('ventas')
@@ -452,20 +289,7 @@ export default function NuevaVentaPage() {
         })
       }
 
-      // Preguntar qué hacer con el ticket
-      const accion = confirm('¿Desea generar el ticket en PDF?\n\nAceptar = Generar PDF\nCancelar = Solo finalizar venta')
-      
-      if (accion) {
-        await generarPDF(factura, clienteInfo, carrito, total, metodoPago)
-        
-        // Preguntar si enviar por WhatsApp
-        if (clienteInfo?.telefono) {
-          const enviarWhats = confirm('¿Desea enviar el ticket por WhatsApp?')
-          if (enviarWhats) {
-            await enviarPDFporWhatsApp(clienteInfo, factura, total, carrito, metodoPago)
-          }
-        }
-      }
+      imprimirTicket(factura, clienteInfo, carrito, total, metodoPago)
       
       setTimeout(() => {
         setCarrito([])
@@ -543,7 +367,6 @@ export default function NuevaVentaPage() {
                   {clientes.map((c) => (<option key={c.id} value={c.id}>{c.nombre}</option>))}
                 </select>
               </div>
-              
               <div className="mb-4">
                 <label className="block text-sm font-medium mb-1">Método de pago</label>
                 <select value={metodoPago} onChange={(e) => setMetodoPago(e.target.value)} className="w-full px-3 py-2 border rounded-lg">

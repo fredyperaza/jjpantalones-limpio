@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
-import { Search, Eye, Printer } from 'lucide-react'
+import { Search, Eye, Printer, FileDown } from 'lucide-react'
 
 interface ClienteInfo {
   nombre: string
@@ -370,6 +370,182 @@ export default function HistorialVentasPage() {
     }
   }
 
+  const descargarPDF = async (venta: Venta) => {
+    // Cargar detalles de la venta
+    const { data: detallesData, error } = await supabase
+      .from('detalle_ventas')
+      .select(`
+        cantidad,
+        precio_unitario,
+        producto:productos!detalle_ventas_id_producto_fkey (
+          nombre,
+          talla,
+          color
+        )
+      `)
+      .eq('id_venta', venta.id)
+
+    if (error) {
+      console.error('Error al cargar detalles:', error)
+      return
+    }
+
+    const items: ItemTicket[] = (detallesData as ItemTicketRaw[] || []).map((item: ItemTicketRaw) => ({
+      cantidad: item.cantidad,
+      precio_unitario: item.precio_unitario,
+      producto: obtenerProductoData(item.producto)
+    }))
+
+    // Obtener datos del cliente si aplica
+    let clienteNombre = 'Cliente Mostrador'
+    let clienteDocumento = ''
+    let clienteTipo = ''
+
+    if (venta.id_cliente) {
+      const { data: clienteData } = await supabase
+        .from('clientes')
+        .select('nombre, numero_documento, tipo_documento')
+        .eq('id', venta.id_cliente)
+        .single()
+      if (clienteData) {
+        clienteNombre = clienteData.nombre
+        clienteDocumento = clienteData.numero_documento || ''
+        clienteTipo = clienteData.tipo_documento || ''
+      }
+    } else if (venta.cliente) {
+      clienteNombre = venta.cliente.nombre
+      clienteDocumento = venta.cliente.numero_documento || ''
+      clienteTipo = venta.cliente.tipo_documento || ''
+    }
+
+    const fechaFormateada = formatearFechaSV(venta.fecha_venta)
+    const total = venta.total
+    const subtotalSinIVA = total / 1.13
+    const ivaCalculado = total - subtotalSinIVA
+
+    // Generar PDF con jsPDF via CDN cargado dinámicamente
+    const script = document.createElement('script')
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js'
+    script.onload = () => {
+      // @ts-expect-error jsPDF cargado dinámicamente
+      const { jsPDF } = window.jspdf
+      const doc = new jsPDF({ unit: 'mm', format: [80, 200], orientation: 'portrait' })
+
+      const ancho = 80
+      let y = 10
+
+      const centrar = (texto: string, fontSize: number = 8) => {
+        doc.setFontSize(fontSize)
+        const anchoTexto = doc.getTextWidth(texto)
+        doc.text(texto, (ancho - anchoTexto) / 2, y)
+        y += fontSize * 0.5
+      }
+
+      const fila = (izq: string, der: string, fontSize: number = 7) => {
+        doc.setFontSize(fontSize)
+        doc.text(izq, 5, y)
+        doc.text(der, ancho - 5 - doc.getTextWidth(der), y)
+        y += 5
+      }
+
+      const linea = (punteada: boolean = false) => {
+        if (punteada) {
+          doc.setLineDashPattern([1, 1], 0)
+        } else {
+          doc.setLineDashPattern([], 0)
+        }
+        doc.line(5, y, ancho - 5, y)
+        y += 4
+      }
+
+      // Encabezado
+      doc.setFont('helvetica', 'bold')
+      centrar('JJPantalones', 11)
+      y += 1
+      doc.setFont('helvetica', 'normal')
+      centrar('Pantalones por Mayoreo', 7)
+      centrar('El Salvador', 7)
+      centrar('NIT: 0614-123456-789-0', 7)
+      y += 2
+
+      linea(true)
+
+      // Datos de factura
+      doc.setFont('helvetica', 'bold')
+      fila('FACTURA:', venta.numero_factura, 7)
+      doc.setFont('helvetica', 'normal')
+      fila('FECHA:', fechaFormateada, 6.5)
+      fila('CAJA:', 'Principal', 7)
+      y += 1
+      linea(true)
+
+      // Cliente
+      doc.setFont('helvetica', 'bold')
+      fila('CLIENTE:', clienteNombre, 7)
+      doc.setFont('helvetica', 'normal')
+      if (clienteDocumento) {
+        fila('DOCUMENTO:', `${clienteTipo}: ${clienteDocumento}`, 7)
+      }
+      y += 1
+      linea(true)
+
+      // Productos
+      doc.setFontSize(7)
+      items.forEach(item => {
+        const nombre = item.producto?.nombre || 'Producto'
+        const talla = item.producto?.talla || ''
+        const color = item.producto?.color || ''
+        const subtotalItem = (item.cantidad * item.precio_unitario).toFixed(2)
+        const descripcion = `${item.cantidad}x ${nombre} (${talla}/${color})`
+        // Dividir texto largo en líneas
+        const lineasTexto = doc.splitTextToSize(descripcion, ancho - 20)
+        doc.text(lineasTexto, 5, y)
+        doc.text(`$${subtotalItem}`, ancho - 5 - doc.getTextWidth(`$${subtotalItem}`), y)
+        y += lineasTexto.length * 4 + 1
+      })
+
+      y += 1
+      linea(true)
+
+      // Totales
+      doc.setFont('helvetica', 'normal')
+      fila('SUBTOTAL:', `$${subtotalSinIVA.toFixed(2)}`, 7)
+      fila('IVA (13%):', `$${ivaCalculado.toFixed(2)}`, 7)
+      y += 1
+      linea(false)
+
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(9)
+      fila('TOTAL:', `$${total.toFixed(2)}`, 9)
+      y += 1
+      linea(true)
+
+      // Método de pago
+      doc.setFont('helvetica', 'normal')
+      const metodosTexto: Record<string, string> = {
+        efectivo: 'Efectivo',
+        tarjeta: 'Tarjeta',
+        transferencia: 'Transferencia'
+      }
+      fila('METODO DE PAGO:', metodosTexto[venta.metodo_pago] || venta.metodo_pago, 7)
+      y += 3
+      linea(true)
+
+      // Pie
+      doc.setFontSize(7)
+      centrar('Gracias por su compra!', 8)
+
+      doc.save(`Factura-${venta.numero_factura}.pdf`)
+    }
+
+    // Solo agregar el script si no está ya cargado
+    if (!document.querySelector('script[src*="jspdf"]')) {
+      document.head.appendChild(script)
+    } else {
+      script.onload?.(new Event('load'))
+    }
+  }
+
   const handleLogout = async () => {
     await supabase.auth.signOut()
     router.push('/login')
@@ -519,6 +695,13 @@ export default function HistorialVentasPage() {
                           >
                             <Printer size={18} />
                           </button>
+                          <button
+                            onClick={() => descargarPDF(v)}
+                            className="text-purple-600 hover:text-purple-800"
+                            title="Descargar PDF"
+                          >
+                            <FileDown size={18} />
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -604,6 +787,12 @@ export default function HistorialVentasPage() {
                 className="flex-1 bg-green-600 text-white py-2 rounded-lg hover:bg-green-700 flex items-center justify-center gap-2"
               >
                 <Printer size={18} /> Reimprimir Ticket
+              </button>
+              <button
+                onClick={() => descargarPDF(selectedVenta)}
+                className="flex-1 bg-purple-600 text-white py-2 rounded-lg hover:bg-purple-700 flex items-center justify-center gap-2"
+              >
+                <FileDown size={18} /> Descargar PDF
               </button>
               <button
                 onClick={() => setShowModal(false)}
