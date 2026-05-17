@@ -77,8 +77,12 @@ interface VentaRaw {
 }
 
 // ✅ Formatea fecha de Supabase (UTC) a hora local de El Salvador (UTC-6)
+// Supabase a veces devuelve "2026-05-17T16:13:26" sin la "Z" al final,
+// lo que hace que JS lo interprete como hora local en vez de UTC.
+// Agregamos "Z" si falta para forzar la lectura correcta en UTC.
 const formatearFechaSV = (fechaISO: string): string => {
-  const fecha = new Date(fechaISO)
+  const fechaUTC = fechaISO.endsWith('Z') || fechaISO.includes('+') ? fechaISO : `${fechaISO}Z`
+  const fecha = new Date(fechaUTC)
   return fecha.toLocaleString('es-SV', {
     timeZone: 'America/El_Salvador',
     year: 'numeric',
