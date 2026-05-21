@@ -1,10 +1,11 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
 import toast from 'react-hot-toast'
+import ReCAPTCHA from 'react-google-recaptcha'
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
@@ -13,9 +14,14 @@ export default function LoginPage() {
   const [blocked, setBlocked] = useState(false)
   const [blockedMessage, setBlockedMessage] = useState('')
   const [clientIp, setClientIp] = useState('')
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null)
+  const recaptchaRef = useRef<ReCAPTCHA>(null)
   const router = useRouter()
 
-  // Obtener IP del cliente al cargar la página
+  // Detectar si estamos en producción
+  const isProduction = process.env.NODE_ENV === 'production'
+
+  // Obtener IP del cliente
   useEffect(() => {
     const getIp = async () => {
       try {
@@ -23,14 +29,13 @@ export default function LoginPage() {
         const data = await res.json()
         setClientIp(data.ip)
       } catch (error) {
-        console.error('Error obteniendo IP:', error)
+        console.error('Error:', error)
         setClientIp('0.0.0.0')
       }
     }
     getIp()
   }, [])
 
-  // Registrar intento de login
   const registrarIntento = async (email: string, ip: string, success: boolean) => {
     try {
       await supabase.from('login_attempts').insert({
@@ -39,12 +44,11 @@ export default function LoginPage() {
         success: success
       })
     } catch (error) {
-      console.error('Error registrando intento:', error)
+      console.error('Error:', error)
     }
   }
 
-  // Verificar rate limiting
-  const verificarRateLimit = async (email: string, ip: string): Promise<{ allowed: boolean; message?: string }> => {
+  const verificarRateLimit = async (email: string, ip: string) => {
     try {
       const { data, error } = await supabase.rpc('verificar_rate_limiting', {
         p_email: email,
@@ -53,19 +57,26 @@ export default function LoginPage() {
         ventana_minutos: 15
       })
       
-      if (error) {
-        console.error('Error verificando rate limit:', error)
-        return { allowed: true }
-      }
-      
-      if (!data) {
+      if (error || !data) {
         return { allowed: false, message: 'Demasiados intentos. Espere 15 minutos.' }
       }
-      
       return { allowed: true }
     } catch (error) {
-      console.error('Error:', error)
       return { allowed: true }
+    }
+  }
+
+  const verificarCaptcha = async (token: string): Promise<boolean> => {
+    try {
+      const response = await fetch('/api/verify-recaptcha', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token })
+      })
+      const data = await response.json()
+      return data.success
+    } catch (error) {
+      return false
     }
   }
 
@@ -77,6 +88,12 @@ export default function LoginPage() {
       return
     }
     
+    // ✅ Solo validar captcha en producción
+    if (isProduction && !captchaToken) {
+      toast.error('Por favor, complete el captcha')
+      return
+    }
+    
     if (!clientIp) {
       toast.error('Error de conexión. Recargue la página.')
       return
@@ -85,15 +102,27 @@ export default function LoginPage() {
     setLoading(true)
 
     try {
-      // Verificar rate limiting
+      // ✅ Solo verificar captcha en producción
+      if (isProduction) {
+        const captchaValid = await verificarCaptcha(captchaToken!)
+        if (!captchaValid) {
+          toast.error('Verificación de captcha fallida')
+          recaptchaRef.current?.reset()
+          setCaptchaToken(null)
+          setLoading(false)
+          return
+        }
+      }
+      
       const rateCheck = await verificarRateLimit(email, clientIp)
       if (!rateCheck.allowed) {
         setBlocked(true)
         setBlockedMessage(rateCheck.message || 'Demasiados intentos. Espere 15 minutos.')
         toast.error(rateCheck.message || 'Demasiados intentos. Espere 15 minutos.')
         setLoading(false)
+        if (recaptchaRef.current) recaptchaRef.current.reset()
+        setCaptchaToken(null)
         
-        // Desbloquear después de 15 minutos
         setTimeout(() => {
           setBlocked(false)
           setBlockedMessage('')
@@ -106,12 +135,13 @@ export default function LoginPage() {
         password,
       })
 
-      // Registrar intento (éxito o fracaso)
       await registrarIntento(email, clientIp, !error)
 
       if (error) {
         toast.error('Credenciales incorrectas')
         setLoading(false)
+        if (recaptchaRef.current) recaptchaRef.current.reset()
+        setCaptchaToken(null)
       } else {
         toast.success('Bienvenido a JJPantalones')
         router.push('/dashboard')
@@ -120,7 +150,13 @@ export default function LoginPage() {
       console.error('Error:', err)
       toast.error('Error al conectar con el servidor')
       setLoading(false)
+      if (recaptchaRef.current) recaptchaRef.current.reset()
+      setCaptchaToken(null)
     }
+  }
+
+  const onChangeCaptcha = (token: string | null) => {
+    setCaptchaToken(token)
   }
 
   return (
@@ -134,7 +170,6 @@ export default function LoginPage() {
               fill
               className="rounded-full object-cover"
               priority
-              sizes="(max-width: 768px) 96px, 96px"
             />
           </div>
           <h1 className="text-2xl font-bold text-[#003366]">JJPantalones</h1>
@@ -162,7 +197,7 @@ export default function LoginPage() {
             />
           </div>
 
-          <div className="mb-6">
+          <div className="mb-4">
             <label className="block text-gray-700 mb-2">Contraseña</label>
             <input
               type="password"
@@ -175,6 +210,17 @@ export default function LoginPage() {
             />
           </div>
 
+          {/* ✅ reCAPTCHA solo visible en producción */}
+          {isProduction && (
+            <div className="mb-4 flex justify-center">
+              <ReCAPTCHA
+                ref={recaptchaRef}
+                sitekey={process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY!}
+                onChange={onChangeCaptcha}
+              />
+            </div>
+          )}
+
           <button
             type="submit"
             disabled={loading || blocked}
@@ -185,7 +231,8 @@ export default function LoginPage() {
         </form>
 
         <div className="mt-4 text-center text-xs text-gray-400">
-          <p>🔒 Sistema seguro | Máximo 5 intentos cada 15 minutos</p>
+          <p>🔒 Máximo 5 intentos cada 15 minutos</p>
+          {!isProduction && <p className="text-yellow-600 mt-1">⚠️ Modo desarrollo - reCAPTCHA desactivado</p>}
         </div>
       </div>
     </div>
