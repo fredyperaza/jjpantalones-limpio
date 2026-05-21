@@ -65,20 +65,29 @@ export default function LoginPage() {
       return { allowed: true }
     }
   }
-
-  const verificarCaptcha = async (token: string): Promise<boolean> => {
-    try {
-      const response = await fetch('/api/verify-recaptcha', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token })
-      })
-      const data = await response.json()
-      return data.success
-    } catch (error) {
-      return false
-    }
+const verificarCaptcha = async (token: string): Promise<boolean> => {
+  // Si no hay token y estamos en desarrollo, omitir verificación
+  if (!token && !isProduction) {
+    return true
   }
+  
+  if (!token) {
+    return false
+  }
+  
+  try {
+    const response = await fetch('/api/verify-recaptcha', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token })
+    })
+    const data = await response.json()
+    return data.success
+  } catch (error) {
+    console.error('Error verificando captcha:', error)
+    return false
+  }
+}
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
