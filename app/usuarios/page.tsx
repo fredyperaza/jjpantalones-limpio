@@ -112,69 +112,77 @@ export default function UsuariosPage() {
   }, [verificarRol, verificarSesion, cargarUsuarios])
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setLoading(true)
+  e.preventDefault()
+  setLoading(true)
 
-    try {
-      if (editing) {
-        const updateData: UpdateData = {
-          nombre_usuario: form.nombre_usuario,
-          email: form.email,
-          nombre_completo: form.nombre_completo,
-          rol: form.rol
-        }
-        
-        if (form.password) {
-          updateData.password_hash = form.password
-        }
-
-        const { error } = await supabase
-          .from('usuarios')
-          .update(updateData)
-          .eq('id', editing.id)
-        if (error) throw error
-      } else {
-        const { data: authData, error: authError } = await supabase.auth.admin.createUser({
-          email: form.email,
-          password: form.password,
-          email_confirm: true,
-          user_metadata: { nombre_completo: form.nombre_completo, rol: form.rol }
-        })
-        
-        if (authError) throw authError
-        
-        if (authData.user) {
-          const { error: insertError } = await supabase
-            .from('usuarios')
-            .insert({
-              id: authData.user.id,
-              nombre_usuario: form.nombre_usuario,
-              email: form.email,
-              nombre_completo: form.nombre_completo,
-              rol: form.rol,
-              activo: true
-            })
-          if (insertError) throw insertError
-        }
+  try {
+    // Obtener sesión actual para el token
+    const { data: { session } } = await supabase.auth.getSession()
+    
+    if (!session) {
+      throw new Error('No hay sesión activa')
+    }
+    
+    if (editing) {
+      // Editar usuario existente
+      const updateData: UpdateData = {
+        nombre_usuario: form.nombre_usuario,
+        email: form.email,
+        nombre_completo: form.nombre_completo,
+        rol: form.rol
+      }
+      
+      if (form.password) {
+        updateData.password_hash = form.password
       }
 
-      setShowModal(false)
-      setEditing(null)
-      setForm({
-        nombre_usuario: '',
-        email: '',
-        nombre_completo: '',
-        password: '',
-        rol: 'vendedor'
+      const { error } = await supabase
+        .from('usuarios')
+        .update(updateData)
+        .eq('id', editing.id)
+      if (error) throw error
+      
+    } else {
+      // Crear nuevo usuario usando la API route
+      const response = await fetch('/api/admin/users', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({
+          email: form.email,
+          password: form.password,
+          nombre_usuario: form.nombre_usuario,
+          nombre_completo: form.nombre_completo,
+          rol: form.rol
+        })
       })
-      await cargarUsuarios()
-    } catch (err) {
-      const error = err as Error
-      alert(error.message || 'Error al guardar')
-    } finally {
-      setLoading(false)
+      
+      const data = await response.json()
+      
+      if (!response.ok) {
+        throw new Error(data.error || 'Error al crear usuario')
+      }
     }
+
+    setShowModal(false)
+    setEditing(null)
+    setForm({
+      nombre_usuario: '',
+      email: '',
+      nombre_completo: '',
+      password: '',
+      rol: 'vendedor'
+    })
+    await cargarUsuarios()
+  } catch (err) {
+    const error = err as Error
+    alert(error.message || 'Error al guardar')
+  } finally {
+    setLoading(false)
   }
+}
 
   const handleDelete = async (id: string) => {
     if (!confirm('¿Eliminar este usuario? Esta acción no se puede deshacer.')) return

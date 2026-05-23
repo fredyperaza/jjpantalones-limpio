@@ -179,6 +179,7 @@ const verificarCaptcha = async (token: string): Promise<boolean> => {
               fill
               className="rounded-full object-cover"
               priority
+              loading="eager" 
             />
           </div>
           <h1 className="text-2xl font-bold text-[#003366]">JJPantalones</h1>
