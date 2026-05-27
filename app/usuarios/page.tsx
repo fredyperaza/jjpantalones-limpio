@@ -182,7 +182,7 @@ export default function UsuariosPage() {
   } finally {
     setLoading(false)
   }
-}
+ }
 
   const handleDelete = async (id: string) => {
     if (!confirm('¿Eliminar este usuario? Esta acción no se puede deshacer.')) return
