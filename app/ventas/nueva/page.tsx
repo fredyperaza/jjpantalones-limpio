@@ -188,49 +188,111 @@ export default function NuevaVentaPage() {
     setCarrito(carrito.filter(item => item.id !== id))
   }
 
-  const imprimirTicket = (factura: string, cliente: Cliente | null, carritoItems: ItemCarrito[], totalVal: number, pagoMetodo: string) => {
-    const fecha = new Date().toLocaleString('es-SV')
-    // Cálculo correcto del IVA
-    const subtotalSinIVA = totalVal / 1.13
-    const ivaCalculado = totalVal - subtotalSinIVA
-    
-    const itemsHtml = carritoItems.map(item => `
-      <div>${item.cantidad}x ${item.nombre} (${item.talla}/${item.color}) - $${(item.cantidad * item.precio).toFixed(2)}</div>
-    `).join('')
-    
-    const html = `
-      <html>
-      <head><title>Ticket ${factura}</title></head>
-      <body style="font-family: monospace; width: 300px; margin: 0 auto;">
-        <div style="text-align: center;">
-          <h2>JJPantalones</h2>
-          <p>Pantalones por Mayoreo<br/>El Salvador 🇸🇻<br/>NIT: 0614-123456-789-0</p>
-          <hr/>
-          <p>FACTURA: ${factura}<br/>FECHA: ${fecha}<br/>CAJA: Principal</p>
-          <hr/>
-          <p>CLIENTE: ${cliente?.nombre || 'Cliente Mostrador'}</p>
-          ${cliente?.numero_documento ? `<p>DOCUMENTO: ${cliente.tipo_documento}: ${cliente.numero_documento}</p>` : ''}
-          <hr/>
-          ${itemsHtml}
-          <hr/>
-          <p>SUBTOTAL: $${subtotalSinIVA.toFixed(2)}</p>
-          <p>IVA (13%): $${ivaCalculado.toFixed(2)}</p>
-          <p><strong>TOTAL: $${totalVal.toFixed(2)}</strong></p>
-          <hr/>
-          <p>MÉTODO DE PAGO: ${pagoMetodo === 'efectivo' ? '💵 Efectivo' : pagoMetodo === 'tarjeta' ? '💳 Tarjeta' : '🏦 Transferencia'}</p>
-          <hr/>
-          <p>¡Gracias por su compra!</p>
+ const imprimirTicket = (factura: string, cliente: Cliente | null, carritoItems: ItemCarrito[], totalVal: number, pagoMetodo: string) => {
+  const fecha = new Date().toLocaleString('es-SV')
+  const subtotalSinIVA = totalVal / 1.13
+  const ivaCalculado = totalVal - subtotalSinIVA
+  
+  // Nombre y teléfono de la dueña (personaliza aquí)
+  const duenaNombre = "Ana María Pérez"
+  const duenaTelefono = "7012-3456"
+  
+  const itemsHtml = carritoItems.map(item => `
+    <div style="margin-bottom: 8px;">
+      <div><strong>${item.cantidad}x</strong> ${item.nombre} (${item.talla}/${item.color})</div>
+      <div style="margin-left: 20px; font-size: 11px;">Precio unitario: $${item.precio.toFixed(2)}</div>
+      <div style="margin-left: 20px; font-size: 11px;">Subtotal: $${(item.cantidad * item.precio).toFixed(2)}</div>
+    </div>
+  `).join('')
+  
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <title>Ticket ${factura}</title>
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+          font-family: 'Courier New', 'Lucida Console', monospace;
+          font-size: 12px;
+          width: 300px;
+          margin: 0 auto;
+          padding: 20px 10px;
+          background: white;
+        }
+        .ticket { text-align: center; }
+        .logo { font-size: 18px; font-weight: bold; color: #003366; }
+        .subtitle { font-size: 10px; color: #666; }
+        .line { border-top: 1px dashed #000; margin: 10px 0; }
+        .line-solid { border-top: 1px solid #000; margin: 10px 0; }
+        .info-row { display: flex; justify-content: space-between; margin: 5px 0; }
+        .producto-row { margin: 8px 0; text-align: left; }
+        .total { font-size: 14px; font-weight: bold; }
+        .gracias { margin-top: 15px; font-size: 10px; color: #666; }
+        @media print {
+          body { margin: 0; padding: 10px; }
+        }
+      </style>
+    </head>
+    <body>
+      <div class="ticket">
+        <div class="logo">JJPANTALONES</div>
+        <div class="subtitle">Pantalones por Mayoreo</div>
+        <div class="subtitle">El Salvador 🇸🇻</div>
+        <div class="subtitle">NIT: 0614-123456-789-0</div>
+        <div class="subtitle">📍 Avenida Independencia Sur, Callejón del Carmen</div>
+        <div class="subtitle">📞 ${duenaTelefono} | Contacto: ${duenaNombre}</div>
+        
+        <div class="line"></div>
+        
+        <div class="info-row"><span>FACTURA:</span><span><strong>${factura}</strong></span></div>
+        <div class="info-row"><span>FECHA:</span><span>${fecha}</span></div>
+        <div class="info-row"><span>CAJA:</span><span>Principal</span></div>
+        
+        <div class="line"></div>
+        
+        <div class="info-row"><span>CLIENTE:</span><span><strong>${cliente?.nombre || 'Cliente Mostrador'}</strong></span></div>
+        ${cliente?.numero_documento ? `<div class="info-row"><span>DOCUMENTO:</span><span>${cliente.tipo_documento}: ${cliente.numero_documento}</span></div>` : ''}
+        ${cliente?.telefono ? `<div class="info-row"><span>TELÉFONO:</span><span>${cliente.telefono}</span></div>` : ''}
+        
+        <div class="line"></div>
+        
+        <div style="font-weight: bold; margin-bottom: 5px;">PRODUCTOS:</div>
+        ${itemsHtml}
+        
+        <div class="line"></div>
+        
+        <div class="info-row"><span>SUBTOTAL:</span><span>$${subtotalSinIVA.toFixed(2)}</span></div>
+        <div class="info-row"><span>IVA (13%):</span><span>$${ivaCalculado.toFixed(2)}</span></div>
+        <div class="line-solid"></div>
+        <div class="info-row total"><span>TOTAL:</span><span><strong>$${totalVal.toFixed(2)}</strong></span></div>
+        
+        <div class="line"></div>
+        
+        <div class="info-row"><span>MÉTODO DE PAGO:</span><span>${pagoMetodo === 'efectivo' ? '💵 Efectivo' : pagoMetodo === 'tarjeta' ? '💳 Tarjeta' : '🏦 Transferencia'}</span></div>
+        
+        <div class="line"></div>
+        
+        <div class="gracias">
+          ¡Gracias por su compra!<br/>
+          Visítenos nuevamente
         </div>
-        <script>window.print();setTimeout(() => window.close(), 1000);</script>
-      </body>
-      </html>
-    `
-    const ventana = window.open('', '_blank', 'width=400,height=600')
-    if (ventana) {
-      ventana.document.write(html)
-      ventana.document.close()
-    }
+      </div>
+      <script>
+        window.print();
+        setTimeout(() => window.close(), 1000);
+      </script>
+    </body>
+    </html>
+  `
+  
+  const ventana = window.open('', '_blank', 'width=400,height=600')
+  if (ventana) {
+    ventana.document.write(html)
+    ventana.document.close()
   }
+}
 
   const finalizarVenta = async () => {
     if (carrito.length === 0) {

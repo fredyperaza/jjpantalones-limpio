@@ -263,112 +263,176 @@ export default function HistorialVentasPage() {
     }
   }
 
-  const reimprimirTicket = async (venta: Venta) => {
-    const { data: detallesData, error } = await supabase
-      .from('detalle_ventas')
-      .select(`
-        cantidad,
-        precio_unitario,
-        producto:productos!detalle_ventas_id_producto_fkey (
-          nombre,
-          talla,
-          color
-        )
-      `)
-      .eq('id_venta', venta.id)
+ const reimprimirTicket = async (venta: Venta) => {
+  // Definir tipos para los datos
+  interface DetalleRaw {
+    cantidad: number
+    precio_unitario: number
+    producto: ProductoDetalle[] | null
+  }
 
-    if (error) {
-      console.error('Error al cargar detalles:', error)
-      return
-    }
+  interface ClienteData {
+    nombre: string
+    numero_documento: string
+    tipo_documento: string
+    telefono: string
+  }
 
-    // ✅ FIX 4: Reemplazar `any` por ItemTicketRaw
-    const items: ItemTicket[] = (detallesData as ItemTicketRaw[] || []).map((item: ItemTicketRaw) => ({
-      cantidad: item.cantidad,
-      precio_unitario: item.precio_unitario,
-      producto: obtenerProductoData(item.producto)
-    }))
+  const { data: detallesData, error } = await supabase
+    .from('detalle_ventas')
+    .select(`
+      cantidad,
+      precio_unitario,
+      producto:productos!detalle_ventas_id_producto_fkey (
+        nombre,
+        talla,
+        color
+      )
+    `)
+    .eq('id_venta', venta.id)
 
-    const fechaOriginal = formatearFechaSV(venta.fecha_venta)
-    const total = venta.total || items.reduce((sum, item) => sum + (item.cantidad * item.precio_unitario), 0)
+  if (error) {
+    console.error('Error al cargar detalles:', error)
+    return
+  }
+
+  const items = (detallesData || []).map((item: DetalleRaw) => ({
+    cantidad: item.cantidad,
+    precio_unitario: item.precio_unitario,
+    producto: obtenerProductoData(item.producto)
+  }))
+
+  const fechaOriginal = new Date(venta.fecha_venta).toLocaleString('es-SV')
+  const total = venta.total || items.reduce((sum, item) => sum + (item.cantidad * item.precio_unitario), 0)
+  const subtotalSinIVA = total / 1.13
+  const ivaCalculado = total - subtotalSinIVA
+
+  // Nombre y teléfono de la dueña (personaliza aquí)
+  const duenaNombre = "Ana María Pérez"
+  const duenaTelefono = "7012-3456"
+
+  let clienteNombre = 'Cliente Mostrador'
+  let clienteDocumento = ''
+  let clienteTipo = ''
+  let clienteTelefono = ''
+
+  if (venta.id_cliente) {
+    const { data: clienteData } = await supabase
+      .from('clientes')
+      .select('nombre, numero_documento, tipo_documento, telefono')
+      .eq('id', venta.id_cliente)
+      .single() as { data: ClienteData | null }
     
-    const subtotalSinIVA = total / 1.13
-    const ivaCalculado = total - subtotalSinIVA
-
-    let clienteNombre = 'Cliente Mostrador'
-    let clienteDocumento = ''
-    let clienteTipo = ''
-
-    if (venta.id_cliente) {
-      const { data: clienteData } = await supabase
-        .from('clientes')
-        .select('nombre, numero_documento, tipo_documento')
-        .eq('id', venta.id_cliente)
-        .single()
-      
-      if (clienteData) {
-        clienteNombre = clienteData.nombre
-        clienteDocumento = clienteData.numero_documento || ''
-        clienteTipo = clienteData.tipo_documento || ''
-      }
-    } else if (venta.cliente) {
-      clienteNombre = venta.cliente.nombre
-      clienteDocumento = venta.cliente.numero_documento || ''
-      clienteTipo = venta.cliente.tipo_documento || ''
+    if (clienteData) {
+      clienteNombre = clienteData.nombre
+      clienteDocumento = clienteData.numero_documento || ''
+      clienteTipo = clienteData.tipo_documento || ''
+      clienteTelefono = clienteData.telefono || ''
     }
+  } else if (venta.cliente) {
+    clienteNombre = venta.cliente.nombre
+    clienteDocumento = venta.cliente.numero_documento || ''
+    clienteTipo = venta.cliente.tipo_documento || ''
+  }
 
-    const htmlTicket = `
-      <!DOCTYPE html>
-      <html>
-      <head><meta charset="UTF-8"><title>Ticket ${venta.numero_factura}</title>
+  const itemsHtml = items.map((item) => `
+    <div style="margin-bottom: 8px;">
+      <div><strong>${item.cantidad}x</strong> ${item.producto?.nombre || 'Producto'} (${item.producto?.talla || ''}/${item.producto?.color || ''})</div>
+      <div style="margin-left: 20px; font-size: 11px;">Precio unitario: $${item.precio_unitario.toFixed(2)}</div>
+      <div style="margin-left: 20px; font-size: 11px;">Subtotal: $${(item.cantidad * item.precio_unitario).toFixed(2)}</div>
+    </div>
+  `).join('')
+
+  const htmlTicket = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <title>Ticket ${venta.numero_factura}</title>
       <style>
-        body { font-family: monospace; width: 300px; margin: 0 auto; padding: 20px 10px; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+          font-family: 'Courier New', 'Lucida Console', monospace;
+          font-size: 12px;
+          width: 300px;
+          margin: 0 auto;
+          padding: 20px 10px;
+          background: white;
+        }
         .ticket { text-align: center; }
+        .logo { font-size: 18px; font-weight: bold; color: #003366; }
+        .subtitle { font-size: 10px; color: #666; }
         .line { border-top: 1px dashed #000; margin: 10px 0; }
         .line-solid { border-top: 1px solid #000; margin: 10px 0; }
         .info-row { display: flex; justify-content: space-between; margin: 5px 0; }
+        .producto-row { margin: 8px 0; text-align: left; }
+        .total { font-size: 14px; font-weight: bold; }
+        .gracias { margin-top: 15px; font-size: 10px; color: #666; }
+        .reimpreso { font-size: 8px; color: red; margin-top: 5px; }
+        @media print {
+          body { margin: 0; padding: 10px; }
+        }
       </style>
-      </head>
-      <body>
-        <div class="ticket">
-          <div class="header">
-            <div class="logo">JJPantalones</div>
-            <div>Pantalones por Mayoreo | El Salvador 🇸🇻</div>
-            <div>NIT: 0614-123456-789-0</div>
-          </div>
-          <div class="line"></div>
-          <div class="info-row"><span>FACTURA:</span><span><strong>${venta.numero_factura}</strong></span></div>
-          <div class="info-row"><span>FECHA:</span><span>${fechaOriginal}</span></div>
-          <div class="info-row"><span>CAJA:</span><span>Principal</span></div>
-          <div class="line"></div>
-          <div class="info-row"><span>CLIENTE:</span><span><strong>${clienteNombre}</strong></span></div>
-          ${clienteDocumento ? `<div class="info-row"><span>DOCUMENTO:</span><span>${clienteTipo}: ${clienteDocumento}</span></div>` : ''}
-          <div class="line"></div>
-          ${items.map((item) => `
-            <div class="info-row"><span>${item.cantidad}x ${item.producto?.nombre || 'Producto'} (${item.producto?.talla || ''}/${item.producto?.color || ''})</span><span>$${(item.cantidad * item.precio_unitario).toFixed(2)}</span></div>
-          `).join('')}
-          <div class="line"></div>
-          <div class="info-row"><span>SUBTOTAL:</span><span>$${subtotalSinIVA.toFixed(2)}</span></div>
-          <div class="info-row"><span>IVA (13%):</span><span>$${ivaCalculado.toFixed(2)}</span></div>
-          <div class="line-solid"></div>
-          <div class="info-row total"><span>TOTAL:</span><span><strong>$${total.toFixed(2)}</strong></span></div>
-          <div class="line"></div>
-          <div class="info-row"><span>MÉTODO DE PAGO:</span><span>${venta.metodo_pago === 'efectivo' ? '💵 Efectivo' : venta.metodo_pago === 'tarjeta' ? '💳 Tarjeta' : '🏦 Transferencia'}</span></div>
-          <div class="line"></div>
-          <div>¡Gracias por su compra!</div>
-          <div class="reimpreso">** REIMPRESIÓN **</div>
+    </head>
+    <body>
+      <div class="ticket">
+        <div class="logo">JJPANTALONES</div>
+        <div class="subtitle">Pantalones por Mayoreo</div>
+        <div class="subtitle">El Salvador 🇸🇻</div>
+        <div class="subtitle">NIT: 0614-123456-789-0</div>
+        <div class="subtitle">📍 Avenida Independencia Sur, Callejón del Carmen</div>
+        <div class="subtitle">📞 ${duenaTelefono} | Contacto: ${duenaNombre}</div>
+        
+        <div class="line"></div>
+        
+        <div class="info-row"><span>FACTURA:</span><span><strong>${venta.numero_factura}</strong></span></div>
+        <div class="info-row"><span>FECHA:</span><span>${fechaOriginal}</span></div>
+        <div class="info-row"><span>CAJA:</span><span>Principal</span></div>
+        
+        <div class="line"></div>
+        
+        <div class="info-row"><span>CLIENTE:</span><span><strong>${clienteNombre}</strong></span></div>
+        ${clienteDocumento ? `<div class="info-row"><span>DOCUMENTO:</span><span>${clienteTipo}: ${clienteDocumento}</span></div>` : ''}
+        ${clienteTelefono ? `<div class="info-row"><span>TELÉFONO:</span><span>${clienteTelefono}</span></div>` : ''}
+        
+        <div class="line"></div>
+        
+        <div style="font-weight: bold; margin-bottom: 5px;">PRODUCTOS:</div>
+        ${itemsHtml}
+        
+        <div class="line"></div>
+        
+        <div class="info-row"><span>SUBTOTAL:</span><span>$${subtotalSinIVA.toFixed(2)}</span></div>
+        <div class="info-row"><span>IVA (13%):</span><span>$${ivaCalculado.toFixed(2)}</span></div>
+        <div class="line-solid"></div>
+        <div class="info-row total"><span>TOTAL:</span><span><strong>$${total.toFixed(2)}</strong></span></div>
+        
+        <div class="line"></div>
+        
+        <div class="info-row"><span>MÉTODO DE PAGO:</span><span>${venta.metodo_pago === 'efectivo' ? '💵 Efectivo' : venta.metodo_pago === 'tarjeta' ? '💳 Tarjeta' : '🏦 Transferencia'}</span></div>
+        
+        <div class="line"></div>
+        
+        <div class="gracias">
+          ¡Gracias por su compra!<br/>
+          Visítenos nuevamente
         </div>
-        <script>window.print();setTimeout(() => window.close(), 1000);</script>
-      </body>
-      </html>
-    `
+        <div class="reimpreso">** REIMPRESIÓN **</div>
+      </div>
+      <script>
+        window.print();
+        setTimeout(() => window.close(), 1000);
+      </script>
+    </body>
+    </html>
+  `
 
-    const ventanaTicket = window.open('', '_blank', 'width=400,height=600')
-    if (ventanaTicket) {
-      ventanaTicket.document.write(htmlTicket)
-      ventanaTicket.document.close()
-    }
+  const ventanaTicket = window.open('', '_blank', 'width=400,height=600')
+  if (ventanaTicket) {
+    ventanaTicket.document.write(htmlTicket)
+    ventanaTicket.document.close()
   }
+}
 
   const descargarPDF = async (venta: Venta) => {
     // Cargar detalles de la venta
