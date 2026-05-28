@@ -3,14 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "set NODE_OPTIONS=--max-old-space-size=4096 && next dev",
-    "build": "next build",
+    "dev": "set NODE_OPTIONS=--max-old-space-size=8192 && next dev",
+    "build": "set NODE_OPTIONS=--max-old-space-size=8192 && next build",
     "start": "next start",
     "lint": "eslint"
   },
   "dependencies": {
     "@supabase/ssr": "^0.10.3",
-    "@supabase/supabase-js": "^2.105.4",
+    "@supabase/supabase-js": "^2.106.2",
     "html2canvas": "^1.4.1",
     "jspdf": "^4.2.1",
     "lucide-react": "^1.14.0",

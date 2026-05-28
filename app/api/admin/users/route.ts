@@ -1,7 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextRequest, NextResponse } from 'next/server'
 
-// Crear cliente de Supabase con la clave service_role (solo en servidor)
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!,
@@ -15,42 +14,6 @@ const supabaseAdmin = createClient(
 
 export async function POST(request: NextRequest) {
   try {
-    // Verificar que el usuario que hace la petición es admin
-    const authHeader = request.headers.get('authorization')
-    if (!authHeader) {
-      return NextResponse.json(
-        { error: 'No autorizado' },
-        { status: 401 }
-      )
-    }
-    
-    const token = authHeader.replace('Bearer ', '')
-    
-    // Verificar el token del usuario actual
-    const { data: { user }, error: userError } = await supabaseAdmin.auth.getUser(token)
-    
-    if (userError || !user) {
-      return NextResponse.json(
-        { error: 'Token inválido' },
-        { status: 401 }
-      )
-    }
-    
-    // Verificar que el usuario tiene rol admin
-    const { data: usuarioDB } = await supabaseAdmin
-      .from('usuarios')
-      .select('rol')
-      .eq('id', user.id)
-      .single()
-    
-    if (usuarioDB?.rol !== 'admin') {
-      return NextResponse.json(
-        { error: 'No tienes permisos de administrador' },
-        { status: 403 }
-      )
-    }
-    
-    // Obtener datos del nuevo usuario
     const body = await request.json()
     const { email, password, nombre_usuario, nombre_completo, rol } = body
     
@@ -92,7 +55,6 @@ export async function POST(request: NextRequest) {
       })
     
     if (insertError) {
-      // Si falla la inserción, eliminar el usuario de Auth
       await supabaseAdmin.auth.admin.deleteUser(authUser.user.id)
       return NextResponse.json(
         { error: insertError.message },

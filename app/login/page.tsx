@@ -11,17 +11,13 @@ export default function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
-  const [blocked, setBlocked] = useState(false)
-  const [blockedMessage, setBlockedMessage] = useState('')
   const [clientIp, setClientIp] = useState('')
   const [captchaToken, setCaptchaToken] = useState<string | null>(null)
   const recaptchaRef = useRef<ReCAPTCHA>(null)
   const router = useRouter()
 
-  // Detectar si estamos en producción
   const isProduction = process.env.NODE_ENV === 'production'
 
-  // Obtener IP del cliente
   useEffect(() => {
     const getIp = async () => {
       try {
@@ -29,7 +25,6 @@ export default function LoginPage() {
         const data = await res.json()
         setClientIp(data.ip)
       } catch (error) {
-        console.error('Error:', error)
         setClientIp('0.0.0.0')
       }
     }
@@ -56,48 +51,32 @@ export default function LoginPage() {
         max_intentos: 5,
         ventana_minutos: 15
       })
-      
       if (error || !data) {
         return { allowed: false, message: 'Demasiados intentos. Espere 15 minutos.' }
       }
       return { allowed: true }
-    } catch (error) {
+    } catch {
       return { allowed: true }
     }
   }
-const verificarCaptcha = async (token: string): Promise<boolean> => {
-  // Si no hay token y estamos en desarrollo, omitir verificación
-  if (!token && !isProduction) {
-    return true
+
+  const verificarCaptcha = async (token: string): Promise<boolean> => {
+    try {
+      const response = await fetch('/api/verify-recaptcha', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token })
+      })
+      const data = await response.json()
+      return data.success
+    } catch {
+      return false
+    }
   }
-  
-  if (!token) {
-    return false
-  }
-  
-  try {
-    const response = await fetch('/api/verify-recaptcha', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token })
-    })
-    const data = await response.json()
-    return data.success
-  } catch (error) {
-    console.error('Error verificando captcha:', error)
-    return false
-  }
-}
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
     
-    if (blocked) {
-      toast.error(blockedMessage)
-      return
-    }
-    
-    // ✅ Solo validar captcha en producción
     if (isProduction && !captchaToken) {
       toast.error('Por favor, complete el captcha')
       return
@@ -111,7 +90,6 @@ const verificarCaptcha = async (token: string): Promise<boolean> => {
     setLoading(true)
 
     try {
-      // ✅ Solo verificar captcha en producción
       if (isProduction) {
         const captchaValid = await verificarCaptcha(captchaToken!)
         if (!captchaValid) {
@@ -125,41 +103,29 @@ const verificarCaptcha = async (token: string): Promise<boolean> => {
       
       const rateCheck = await verificarRateLimit(email, clientIp)
       if (!rateCheck.allowed) {
-        setBlocked(true)
-        setBlockedMessage(rateCheck.message || 'Demasiados intentos. Espere 15 minutos.')
         toast.error(rateCheck.message || 'Demasiados intentos. Espere 15 minutos.')
         setLoading(false)
-        if (recaptchaRef.current) recaptchaRef.current.reset()
+        recaptchaRef.current?.reset()
         setCaptchaToken(null)
-        
-        setTimeout(() => {
-          setBlocked(false)
-          setBlockedMessage('')
-        }, 15 * 60 * 1000)
         return
       }
       
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      })
-
+      const { error } = await supabase.auth.signInWithPassword({ email, password })
       await registrarIntento(email, clientIp, !error)
 
       if (error) {
         toast.error('Credenciales incorrectas')
         setLoading(false)
-        if (recaptchaRef.current) recaptchaRef.current.reset()
+        recaptchaRef.current?.reset()
         setCaptchaToken(null)
       } else {
         toast.success('Bienvenido a JJPantalones')
         router.push('/dashboard')
       }
-    } catch (err) {
-      console.error('Error:', err)
+    } catch {
       toast.error('Error al conectar con el servidor')
       setLoading(false)
-      if (recaptchaRef.current) recaptchaRef.current.reset()
+      recaptchaRef.current?.reset()
       setCaptchaToken(null)
     }
   }
@@ -173,25 +139,12 @@ const verificarCaptcha = async (token: string): Promise<boolean> => {
       <div className="bg-white p-8 rounded-lg shadow-md w-96">
         <div className="text-center mb-8">
           <div className="relative w-24 h-24 mx-auto mb-4">
-            <Image
-              src="/logo.png"
-              alt="JJPantalones"
-              fill
-              className="rounded-full object-cover"
-              priority
-              loading="eager" 
-            />
+            <Image src="/logo.png" alt="JJPantalones" fill className="rounded-full object-cover" priority />
           </div>
           <h1 className="text-2xl font-bold text-[#003366]">JJPantalones</h1>
           <p className="text-gray-500 text-sm">Pantalones por Mayoreo</p>
           <p className="text-xs text-gray-400 mt-2">El Salvador 🇸🇻</p>
         </div>
-
-        {blocked && (
-          <div className="mb-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg">
-            <p className="text-sm font-medium">{blockedMessage}</p>
-          </div>
-        )}
 
         <form onSubmit={handleLogin}>
           <div className="mb-4">
@@ -203,7 +156,6 @@ const verificarCaptcha = async (token: string): Promise<boolean> => {
               className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#003366]"
               placeholder="admin@jjpantalones.com"
               required
-              disabled={blocked}
             />
           </div>
 
@@ -216,11 +168,9 @@ const verificarCaptcha = async (token: string): Promise<boolean> => {
               className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#003366]"
               placeholder="••••••••"
               required
-              disabled={blocked}
             />
           </div>
 
-          {/* ✅ reCAPTCHA solo visible en producción */}
           {isProduction && (
             <div className="mb-4 flex justify-center">
               <ReCAPTCHA
@@ -233,7 +183,7 @@ const verificarCaptcha = async (token: string): Promise<boolean> => {
 
           <button
             type="submit"
-            disabled={loading || blocked}
+            disabled={loading}
             className="w-full bg-[#003366] text-white py-2 rounded-lg hover:bg-[#002244] transition disabled:opacity-50"
           >
             {loading ? 'Ingresando...' : 'Ingresar'}
@@ -242,7 +192,6 @@ const verificarCaptcha = async (token: string): Promise<boolean> => {
 
         <div className="mt-4 text-center text-xs text-gray-400">
           <p>🔒 Máximo 5 intentos cada 15 minutos</p>
-          {!isProduction && <p className="text-yellow-600 mt-1">⚠️ Modo desarrollo - reCAPTCHA desactivado</p>}
         </div>
       </div>
     </div>
