@@ -12,6 +12,7 @@ interface Producto {
   color: string
   genero: string
   marca: string
+  codigo_barras: string
   precio_costo: number
   precio_venta: number
   stock_actual: number
@@ -24,6 +25,7 @@ interface FormData {
   color: string
   genero: string
   marca: string
+  codigo_barras: string
   precio_costo: number
   precio_venta: number
   stock_actual: number
@@ -45,6 +47,7 @@ export default function ProductosPage() {
     color: '',
     genero: 'unisex',
     marca: '',
+    codigo_barras: '',
     precio_costo: 0,
     precio_venta: 0,
     stock_actual: 0,
@@ -144,6 +147,7 @@ export default function ProductosPage() {
         color: form.color || 'Sin color',
         genero: form.genero,
         marca: form.marca || 'Sin marca',
+        codigo_barras: form.codigo_barras || null,
         precio_costo: form.precio_costo,
         precio_venta: form.precio_venta,
         stock_actual: form.stock_actual,
@@ -172,6 +176,7 @@ export default function ProductosPage() {
         color: '',
         genero: 'unisex',
         marca: '',
+        codigo_barras: '',
         precio_costo: 0,
         precio_venta: 0,
         stock_actual: 0,
@@ -205,6 +210,7 @@ export default function ProductosPage() {
       color: producto.color || '',
       genero: producto.genero,
       marca: producto.marca || '',
+      codigo_barras: producto.codigo_barras || '',
       precio_costo: producto.precio_costo,
       precio_venta: producto.precio_venta,
       stock_actual: producto.stock_actual,
@@ -220,7 +226,8 @@ export default function ProductosPage() {
 
   const productosFiltrados = productos.filter(p =>
     p.nombre.toLowerCase().includes(search.toLowerCase()) ||
-    p.marca?.toLowerCase().includes(search.toLowerCase())
+    p.marca?.toLowerCase().includes(search.toLowerCase()) ||
+    p.codigo_barras?.toLowerCase().includes(search.toLowerCase())
   )
 
   if (!autorizado) {
@@ -274,6 +281,7 @@ export default function ProductosPage() {
                   color: '',
                   genero: 'unisex',
                   marca: '',
+                  codigo_barras: '',
                   precio_costo: 0,
                   precio_venta: 0,
                   stock_actual: 0,
@@ -288,23 +296,26 @@ export default function ProductosPage() {
           </div>
         </div>
 
+        {/* Buscador */}
         <div className="mb-6 relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
           <input
             type="text"
-            placeholder="Buscar por nombre o marca..."
+            placeholder="Buscar por nombre, marca o código de barras..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full pl-10 pr-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#003366]"
           />
         </div>
 
+        {/* Tabla de productos */}
         <div className="bg-white rounded-lg shadow overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead className="bg-gray-50">
                 <tr>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Producto</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Código</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Talla/Color</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Stock</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Precio</th>
@@ -314,7 +325,7 @@ export default function ProductosPage() {
               <tbody className="divide-y divide-gray-200">
                 {loading ? (
                   <tr>
-                    <td colSpan={5} className="px-6 py-8 text-center">
+                    <td colSpan={6} className="px-6 py-8 text-center">
                       <div className="flex justify-center">
                         <div className="w-6 h-6 border-2 border-[#003366] border-t-transparent rounded-full animate-spin"></div>
                       </div>
@@ -323,7 +334,7 @@ export default function ProductosPage() {
                   </tr>
                 ) : productosFiltrados.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="px-6 py-8 text-center text-gray-500">
+                    <td colSpan={6} className="px-6 py-8 text-center text-gray-500">
                       {search ? 'No se encontraron productos' : 'No hay productos registrados'}
                     </td>
                   </tr>
@@ -336,6 +347,7 @@ export default function ProductosPage() {
                           <p className="text-sm text-gray-500">{p.marca}</p>
                         </div>
                       </td>
+                      <td className="px-6 py-4 font-mono text-sm">{p.codigo_barras || '-'}</td>
                       <td className="px-6 py-4">
                         {p.talla} / {p.color}
                       </td>
@@ -370,7 +382,7 @@ export default function ProductosPage() {
         )}
       </main>
 
-      {/* Modal */}
+      {/* Modal para agregar/editar */}
       {showModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
@@ -431,6 +443,16 @@ export default function ProductosPage() {
               </div>
               <div className="grid grid-cols-2 gap-3 mb-3">
                 <div>
+                  <label className="block text-sm font-medium mb-1">Código de barras</label>
+                  <input
+                    type="text"
+                    value={form.codigo_barras}
+                    onChange={(e) => setForm({ ...form, codigo_barras: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg"
+                    placeholder="Código de barras del producto"
+                  />
+                </div>
+                <div>
                   <label className="block text-sm font-medium mb-1">Precio Costo</label>
                   <input
                     type="number"
@@ -440,6 +462,8 @@ export default function ProductosPage() {
                     className="w-full px-3 py-2 border rounded-lg"
                   />
                 </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3 mb-3">
                 <div>
                   <label className="block text-sm font-medium mb-1">Precio Venta</label>
                   <input
@@ -451,8 +475,6 @@ export default function ProductosPage() {
                     className="w-full px-3 py-2 border rounded-lg"
                   />
                 </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3 mb-4">
                 <div>
                   <label className="block text-sm font-medium mb-1">Stock Actual</label>
                   <input
@@ -462,6 +484,8 @@ export default function ProductosPage() {
                     className="w-full px-3 py-2 border rounded-lg"
                   />
                 </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3 mb-4">
                 <div>
                   <label className="block text-sm font-medium mb-1">Stock Mínimo</label>
                   <input
@@ -469,6 +493,7 @@ export default function ProductosPage() {
                     value={form.stock_minimo}
                     onChange={(e) => setForm({ ...form, stock_minimo: parseInt(e.target.value) })}
                     className="w-full px-3 py-2 border rounded-lg"
+                    placeholder="Alerta cuando baje de aquí"
                   />
                 </div>
               </div>
