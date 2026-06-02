@@ -233,7 +233,7 @@ export default function NuevaVentaPage() {
       </head>
       <body>
         <div class="ticket">
-          <div class="logo">JJPANTALONES</div>
+          <div class="logo">JJPANTALONESPORMAYOREO</div>
           <div class="subtitle">Pantalones por Mayoreo</div>
           <div class="subtitle">El Salvador 🇸🇻</div>
           <div class="subtitle">📍 Avenida Independencia Sur, Callejón del Carmen</div>

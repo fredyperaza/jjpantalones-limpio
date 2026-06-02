@@ -297,8 +297,8 @@ export default function HistorialVentasPage() {
     const fechaOriginal = formatearFechaSV(venta.fecha_venta)
     const total = venta.total || items.reduce((sum, item) => sum + (item.cantidad * item.precio_unitario), 0)
 
-    const duenaNombre = "Johana Beatriz Mendoza"
-    const duenaTelefono = "7960-1871"
+    const duenaNombre = "jjpantalones"
+    const duenaTelefono = "7099-7994"
 
     let clienteNombre = 'Cliente Mostrador'
     let clienteDocumento = ''
@@ -365,7 +365,7 @@ export default function HistorialVentasPage() {
       </head>
       <body>
         <div class="ticket">
-          <div class="logo">JJPANTALONES</div>
+          <div class="logo">JJPANTALONESPORMAYOREO</div>
           <div class="subtitle">Pantalones por Mayoreo</div>
           <div class="subtitle">El Salvador 🇸🇻</div>
           <div class="subtitle">📍 Avenida Independencia Sur, Callejón del Carmen</div>
