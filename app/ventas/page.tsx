@@ -48,7 +48,6 @@ interface ItemTicket {
   producto: ProductoDetalle | null
 }
 
-// ✅ FIX 1: Tipos raw que devuelve Supabase (producto como array)
 interface DetalleRaw {
   id: string
   cantidad: number
@@ -76,10 +75,6 @@ interface VentaRaw {
   usuario: UsuarioInfo[]
 }
 
-// ✅ Formatea fecha de Supabase (UTC) a hora local de El Salvador (UTC-6)
-// Supabase a veces devuelve "2026-05-17T16:13:26" sin la "Z" al final,
-// lo que hace que JS lo interprete como hora local en vez de UTC.
-// Agregamos "Z" si falta para forzar la lectura correcta en UTC.
 const formatearFechaSV = (fechaISO: string): string => {
   const fechaUTC = fechaISO.endsWith('Z') || fechaISO.includes('+') ? fechaISO : `${fechaISO}Z`
   const fecha = new Date(fechaUTC)
@@ -193,7 +188,6 @@ export default function HistorialVentasPage() {
 
       if (error) throw error
 
-      // ✅ FIX 2: Reemplazar `any` por VentaRaw
       const ventasFormateadas: Venta[] = (data || []).map((item: VentaRaw) => ({
         id: item.id,
         numero_factura: item.numero_factura,
@@ -251,7 +245,6 @@ export default function HistorialVentasPage() {
     }
 
     if (data) {
-      // ✅ FIX 3: Reemplazar `any` por DetalleRaw (incluye id y subtotal)
       const detallesFormateados: DetalleVenta[] = (data as DetalleRaw[]).map((item: DetalleRaw) => ({
         id: item.id,
         cantidad: item.cantidad,
@@ -263,179 +256,170 @@ export default function HistorialVentasPage() {
     }
   }
 
- const reimprimirTicket = async (venta: Venta) => {
-  // Definir tipos para los datos
-  interface DetalleRaw {
-    cantidad: number
-    precio_unitario: number
-    producto: ProductoDetalle[] | null
-  }
-
-  interface ClienteData {
-    nombre: string
-    numero_documento: string
-    tipo_documento: string
-    telefono: string
-  }
-
-  const { data: detallesData, error } = await supabase
-    .from('detalle_ventas')
-    .select(`
-      cantidad,
-      precio_unitario,
-      producto:productos!detalle_ventas_id_producto_fkey (
-        nombre,
-        talla,
-        color
-      )
-    `)
-    .eq('id_venta', venta.id)
-
-  if (error) {
-    console.error('Error al cargar detalles:', error)
-    return
-  }
-
-  const items = (detallesData || []).map((item: DetalleRaw) => ({
-    cantidad: item.cantidad,
-    precio_unitario: item.precio_unitario,
-    producto: obtenerProductoData(item.producto)
-  }))
-
-  const fechaOriginal = new Date(venta.fecha_venta).toLocaleString('es-SV')
-  const total = venta.total || items.reduce((sum, item) => sum + (item.cantidad * item.precio_unitario), 0)
-  const subtotalSinIVA = total / 1.13
-  const ivaCalculado = total - subtotalSinIVA
-
-  // Nombre y teléfono de la dueña (personaliza aquí)
-  const duenaNombre = "Ana María Pérez"
-  const duenaTelefono = "7012-3456"
-
-  let clienteNombre = 'Cliente Mostrador'
-  let clienteDocumento = ''
-  let clienteTipo = ''
-  let clienteTelefono = ''
-
-  if (venta.id_cliente) {
-    const { data: clienteData } = await supabase
-      .from('clientes')
-      .select('nombre, numero_documento, tipo_documento, telefono')
-      .eq('id', venta.id_cliente)
-      .single() as { data: ClienteData | null }
-    
-    if (clienteData) {
-      clienteNombre = clienteData.nombre
-      clienteDocumento = clienteData.numero_documento || ''
-      clienteTipo = clienteData.tipo_documento || ''
-      clienteTelefono = clienteData.telefono || ''
+  const reimprimirTicket = async (venta: Venta) => {
+    interface DetalleRaw {
+      cantidad: number
+      precio_unitario: number
+      producto: ProductoDetalle[] | null
     }
-  } else if (venta.cliente) {
-    clienteNombre = venta.cliente.nombre
-    clienteDocumento = venta.cliente.numero_documento || ''
-    clienteTipo = venta.cliente.tipo_documento || ''
-  }
 
-  const itemsHtml = items.map((item) => `
-    <div style="margin-bottom: 8px;">
-      <div><strong>${item.cantidad}x</strong> ${item.producto?.nombre || 'Producto'} (${item.producto?.talla || ''}/${item.producto?.color || ''})</div>
-      <div style="margin-left: 20px; font-size: 11px;">Precio unitario: $${item.precio_unitario.toFixed(2)}</div>
-      <div style="margin-left: 20px; font-size: 11px;">Subtotal: $${(item.cantidad * item.precio_unitario).toFixed(2)}</div>
-    </div>
-  `).join('')
+    interface ClienteData {
+      nombre: string
+      numero_documento: string
+      tipo_documento: string
+      telefono: string
+    }
 
-  const htmlTicket = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="UTF-8">
-      <title>Ticket ${venta.numero_factura}</title>
-      <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-          font-family: 'Courier New', 'Lucida Console', monospace;
-          font-size: 12px;
-          width: 300px;
-          margin: 0 auto;
-          padding: 20px 10px;
-          background: white;
-        }
-        .ticket { text-align: center; }
-        .logo { font-size: 18px; font-weight: bold; color: #003366; }
-        .subtitle { font-size: 10px; color: #666; }
-        .line { border-top: 1px dashed #000; margin: 10px 0; }
-        .line-solid { border-top: 1px solid #000; margin: 10px 0; }
-        .info-row { display: flex; justify-content: space-between; margin: 5px 0; }
-        .producto-row { margin: 8px 0; text-align: left; }
-        .total { font-size: 14px; font-weight: bold; }
-        .gracias { margin-top: 15px; font-size: 10px; color: #666; }
-        .reimpreso { font-size: 8px; color: red; margin-top: 5px; }
-        @media print {
-          body { margin: 0; padding: 10px; }
-        }
-      </style>
-    </head>
-    <body>
-      <div class="ticket">
-        <div class="logo">JJPANTALONES</div>
-        <div class="subtitle">Pantalones por Mayoreo</div>
-        <div class="subtitle">El Salvador 🇸🇻</div>
-        <div class="subtitle">NIT: 0614-123456-789-0</div>
-        <div class="subtitle">📍 Avenida Independencia Sur, Callejón del Carmen</div>
-        <div class="subtitle">📞 ${duenaTelefono} | Contacto: ${duenaNombre}</div>
-        
-        <div class="line"></div>
-        
-        <div class="info-row"><span>FACTURA:</span><span><strong>${venta.numero_factura}</strong></span></div>
-        <div class="info-row"><span>FECHA:</span><span>${fechaOriginal}</span></div>
-        <div class="info-row"><span>CAJA:</span><span>Principal</span></div>
-        
-        <div class="line"></div>
-        
-        <div class="info-row"><span>CLIENTE:</span><span><strong>${clienteNombre}</strong></span></div>
-        ${clienteDocumento ? `<div class="info-row"><span>DOCUMENTO:</span><span>${clienteTipo}: ${clienteDocumento}</span></div>` : ''}
-        ${clienteTelefono ? `<div class="info-row"><span>TELÉFONO:</span><span>${clienteTelefono}</span></div>` : ''}
-        
-        <div class="line"></div>
-        
-        <div style="font-weight: bold; margin-bottom: 5px;">PRODUCTOS:</div>
-        ${itemsHtml}
-        
-        <div class="line"></div>
-        
-        <div class="info-row"><span>SUBTOTAL:</span><span>$${subtotalSinIVA.toFixed(2)}</span></div>
-        <div class="info-row"><span>IVA (13%):</span><span>$${ivaCalculado.toFixed(2)}</span></div>
-        <div class="line-solid"></div>
-        <div class="info-row total"><span>TOTAL:</span><span><strong>$${total.toFixed(2)}</strong></span></div>
-        
-        <div class="line"></div>
-        
-        <div class="info-row"><span>MÉTODO DE PAGO:</span><span>${venta.metodo_pago === 'efectivo' ? '💵 Efectivo' : venta.metodo_pago === 'tarjeta' ? '💳 Tarjeta' : '🏦 Transferencia'}</span></div>
-        
-        <div class="line"></div>
-        
-        <div class="gracias">
-          ¡Gracias por su compra!<br/>
-          Visítenos nuevamente
-        </div>
-        <div class="reimpreso">** REIMPRESIÓN **</div>
+    const { data: detallesData, error } = await supabase
+      .from('detalle_ventas')
+      .select(`
+        cantidad,
+        precio_unitario,
+        producto:productos!detalle_ventas_id_producto_fkey (
+          nombre,
+          talla,
+          color
+        )
+      `)
+      .eq('id_venta', venta.id)
+
+    if (error) {
+      console.error('Error al cargar detalles:', error)
+      return
+    }
+
+    const items = (detallesData || []).map((item: DetalleRaw) => ({
+      cantidad: item.cantidad,
+      precio_unitario: item.precio_unitario,
+      producto: obtenerProductoData(item.producto)
+    }))
+
+    const fechaOriginal = formatearFechaSV(venta.fecha_venta)
+    const total = venta.total || items.reduce((sum, item) => sum + (item.cantidad * item.precio_unitario), 0)
+
+    const duenaNombre = "Johana Beatriz Mendoza"
+    const duenaTelefono = "7960-1871"
+
+    let clienteNombre = 'Cliente Mostrador'
+    let clienteDocumento = ''
+    let clienteTipo = ''
+    let clienteTelefono = ''
+
+    if (venta.id_cliente) {
+      const { data: clienteData } = await supabase
+        .from('clientes')
+        .select('nombre, numero_documento, tipo_documento, telefono')
+        .eq('id', venta.id_cliente)
+        .single() as { data: ClienteData | null }
+      
+      if (clienteData) {
+        clienteNombre = clienteData.nombre
+        clienteDocumento = clienteData.numero_documento || ''
+        clienteTipo = clienteData.tipo_documento || ''
+        clienteTelefono = clienteData.telefono || ''
+      }
+    } else if (venta.cliente) {
+      clienteNombre = venta.cliente.nombre
+      clienteDocumento = venta.cliente.numero_documento || ''
+      clienteTipo = venta.cliente.tipo_documento || ''
+    }
+
+    const itemsHtml = items.map((item) => `
+      <div style="margin-bottom: 8px;">
+        <div><strong>${item.cantidad}x</strong> ${item.producto?.nombre || 'Producto'} (${item.producto?.talla || ''}/${item.producto?.color || ''})</div>
+        <div style="margin-left: 20px; font-size: 11px;">Precio unitario: $${item.precio_unitario.toFixed(2)}</div>
+        <div style="margin-left: 20px; font-size: 11px;">Subtotal: $${(item.cantidad * item.precio_unitario).toFixed(2)}</div>
       </div>
-      <script>
-        window.print();
-        setTimeout(() => window.close(), 1000);
-      </script>
-    </body>
-    </html>
-  `
+    `).join('')
 
-  const ventanaTicket = window.open('', '_blank', 'width=400,height=600')
-  if (ventanaTicket) {
-    ventanaTicket.document.write(htmlTicket)
-    ventanaTicket.document.close()
+    const htmlTicket = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <title>Ticket ${venta.numero_factura}</title>
+        <style>
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body {
+            font-family: 'Courier New', 'Lucida Console', monospace;
+            font-size: 12px;
+            width: 300px;
+            margin: 0 auto;
+            padding: 20px 10px;
+            background: white;
+          }
+          .ticket { text-align: center; }
+          .logo { font-size: 18px; font-weight: bold; color: #003366; }
+          .subtitle { font-size: 10px; color: #666; }
+          .line { border-top: 1px dashed #000; margin: 10px 0; }
+          .line-solid { border-top: 1px solid #000; margin: 10px 0; }
+          .info-row { display: flex; justify-content: space-between; margin: 5px 0; }
+          .producto-row { margin: 8px 0; text-align: left; }
+          .total { font-size: 14px; font-weight: bold; }
+          .gracias { margin-top: 15px; font-size: 10px; color: #666; }
+          .reimpreso { font-size: 8px; color: red; margin-top: 5px; }
+          @media print {
+            body { margin: 0; padding: 10px; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="ticket">
+          <div class="logo">JJPANTALONES</div>
+          <div class="subtitle">Pantalones por Mayoreo</div>
+          <div class="subtitle">El Salvador 🇸🇻</div>
+          <div class="subtitle">📍 Avenida Independencia Sur, Callejón del Carmen</div>
+          <div class="subtitle">📞 ${duenaTelefono} | Contacto: ${duenaNombre}</div>
+          
+          <div class="line"></div>
+          
+          <div class="info-row"><span>FACTURA:</span><span><strong>${venta.numero_factura}</strong></span></div>
+          <div class="info-row"><span>FECHA:</span><span>${fechaOriginal}</span></div>
+          <div class="info-row"><span>CAJA:</span><span>Principal</span></div>
+          
+          <div class="line"></div>
+          
+          <div class="info-row"><span>CLIENTE:</span><span><strong>${clienteNombre}</strong></span></div>
+          ${clienteDocumento ? `<div class="info-row"><span>DOCUMENTO:</span><span>${clienteTipo}: ${clienteDocumento}</span></div>` : ''}
+          ${clienteTelefono ? `<div class="info-row"><span>TELÉFONO:</span><span>${clienteTelefono}</span></div>` : ''}
+          
+          <div class="line"></div>
+          
+          <div style="font-weight: bold; margin-bottom: 5px;">PRODUCTOS:</div>
+          ${itemsHtml}
+          
+          <div class="line"></div>
+          
+          <div class="info-row total"><span>TOTAL:</span><span><strong>$${total.toFixed(2)}</strong></span></div>
+          
+          <div class="line"></div>
+          
+          <div class="info-row"><span>MÉTODO DE PAGO:</span><span>${venta.metodo_pago === 'efectivo' ? '💵 Efectivo' : venta.metodo_pago === 'tarjeta' ? '💳 Tarjeta' : '🏦 Transferencia'}</span></div>
+          
+          <div class="line"></div>
+          
+          <div class="gracias">
+            ¡Gracias por su compra!<br/>
+            Visítenos nuevamente
+          </div>
+          <div class="reimpreso">** REIMPRESIÓN **</div>
+        </div>
+        <script>
+          window.print();
+          setTimeout(() => window.close(), 1000);
+        </script>
+      </body>
+      </html>
+    `
+
+    const ventanaTicket = window.open('', '_blank', 'width=400,height=600')
+    if (ventanaTicket) {
+      ventanaTicket.document.write(htmlTicket)
+      ventanaTicket.document.close()
+    }
   }
-}
 
   const descargarPDF = async (venta: Venta) => {
-    // Cargar detalles de la venta
     const { data: detallesData, error } = await supabase
       .from('detalle_ventas')
       .select(`
@@ -460,7 +444,6 @@ export default function HistorialVentasPage() {
       producto: obtenerProductoData(item.producto)
     }))
 
-    // Obtener datos del cliente si aplica
     let clienteNombre = 'Cliente Mostrador'
     let clienteDocumento = ''
     let clienteTipo = ''
@@ -484,10 +467,7 @@ export default function HistorialVentasPage() {
 
     const fechaFormateada = formatearFechaSV(venta.fecha_venta)
     const total = venta.total
-    const subtotalSinIVA = total / 1.13
-    const ivaCalculado = total - subtotalSinIVA
 
-    // Generar PDF con jsPDF via CDN cargado dinámicamente
     const script = document.createElement('script')
     script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js'
     script.onload = () => {
@@ -522,19 +502,16 @@ export default function HistorialVentasPage() {
         y += 4
       }
 
-      // Encabezado
       doc.setFont('helvetica', 'bold')
-      centrar('JJPantalones', 11)
+      centrar('JJPANTALONES', 11)
       y += 1
       doc.setFont('helvetica', 'normal')
       centrar('Pantalones por Mayoreo', 7)
       centrar('El Salvador', 7)
-      centrar('NIT: 0614-123456-789-0', 7)
       y += 2
 
       linea(true)
 
-      // Datos de factura
       doc.setFont('helvetica', 'bold')
       fila('FACTURA:', venta.numero_factura, 7)
       doc.setFont('helvetica', 'normal')
@@ -543,7 +520,6 @@ export default function HistorialVentasPage() {
       y += 1
       linea(true)
 
-      // Cliente
       doc.setFont('helvetica', 'bold')
       fila('CLIENTE:', clienteNombre, 7)
       doc.setFont('helvetica', 'normal')
@@ -553,7 +529,6 @@ export default function HistorialVentasPage() {
       y += 1
       linea(true)
 
-      // Productos
       doc.setFontSize(7)
       items.forEach(item => {
         const nombre = item.producto?.nombre || 'Producto'
@@ -561,7 +536,6 @@ export default function HistorialVentasPage() {
         const color = item.producto?.color || ''
         const subtotalItem = (item.cantidad * item.precio_unitario).toFixed(2)
         const descripcion = `${item.cantidad}x ${nombre} (${talla}/${color})`
-        // Dividir texto largo en líneas
         const lineasTexto = doc.splitTextToSize(descripcion, ancho - 20)
         doc.text(lineasTexto, 5, y)
         doc.text(`$${subtotalItem}`, ancho - 5 - doc.getTextWidth(`$${subtotalItem}`), y)
@@ -571,20 +545,12 @@ export default function HistorialVentasPage() {
       y += 1
       linea(true)
 
-      // Totales
-      doc.setFont('helvetica', 'normal')
-      fila('SUBTOTAL:', `$${subtotalSinIVA.toFixed(2)}`, 7)
-      fila('IVA (13%):', `$${ivaCalculado.toFixed(2)}`, 7)
-      y += 1
-      linea(false)
-
       doc.setFont('helvetica', 'bold')
       doc.setFontSize(9)
       fila('TOTAL:', `$${total.toFixed(2)}`, 9)
       y += 1
       linea(true)
 
-      // Método de pago
       doc.setFont('helvetica', 'normal')
       const metodosTexto: Record<string, string> = {
         efectivo: 'Efectivo',
@@ -595,14 +561,12 @@ export default function HistorialVentasPage() {
       y += 3
       linea(true)
 
-      // Pie
       doc.setFontSize(7)
       centrar('Gracias por su compra!', 8)
 
       doc.save(`Factura-${venta.numero_factura}.pdf`)
     }
 
-    // Solo agregar el script si no está ya cargado
     if (!document.querySelector('script[src*="jspdf"]')) {
       document.head.appendChild(script)
     } else {
@@ -719,7 +683,7 @@ export default function HistorialVentasPage() {
               <tbody className="divide-y divide-gray-200">
                 {loading ? (
                   <tr>
-                    <td colSpan={7} className="px-6 py-8 text-center">Cargando...</td>
+                    <td colSpan={7} className="px-6 py-8 text-center">Cargando...None</td>
                   </tr>
                 ) : ventasFiltradas.length === 0 ? (
                   <tr>
@@ -729,9 +693,7 @@ export default function HistorialVentasPage() {
                   ventasFiltradas.map((v) => (
                     <tr key={v.id} className="hover:bg-gray-50">
                       <td className="px-6 py-4 font-mono text-sm">{v.numero_factura}</td>
-                      <td className="px-6 py-4 text-sm">
-                        {formatearFechaSV(v.fecha_venta)}
-                      </td>
+                      <td className="px-6 py-4 text-sm">{formatearFechaSV(v.fecha_venta)}</td>
                       <td className="px-6 py-4">{v.cliente?.nombre || 'Cliente Mostrador'}</td>
                       <td className="px-6 py-4 font-bold text-[#003366]">${v.total.toFixed(2)}</td>
                       <td className="px-6 py-4">
@@ -745,25 +707,13 @@ export default function HistorialVentasPage() {
                       </td>
                       <td className="px-6 py-4">
                         <div className="flex gap-2">
-                          <button
-                            onClick={() => verDetalle(v)}
-                            className="text-blue-600 hover:text-blue-800"
-                            title="Ver detalle"
-                          >
+                          <button onClick={() => verDetalle(v)} className="text-blue-600 hover:text-blue-800" title="Ver detalle">
                             <Eye size={18} />
                           </button>
-                          <button
-                            onClick={() => reimprimirTicket(v)}
-                            className="text-green-600 hover:text-green-800"
-                            title="Reimprimir ticket"
-                          >
+                          <button onClick={() => reimprimirTicket(v)} className="text-green-600 hover:text-green-800" title="Reimprimir ticket">
                             <Printer size={18} />
                           </button>
-                          <button
-                            onClick={() => descargarPDF(v)}
-                            className="text-purple-600 hover:text-purple-800"
-                            title="Descargar PDF"
-                          >
+                          <button onClick={() => descargarPDF(v)} className="text-purple-600 hover:text-purple-800" title="Descargar PDF">
                             <FileDown size={18} />
                           </button>
                         </div>
@@ -787,30 +737,12 @@ export default function HistorialVentasPage() {
             </div>
             <div className="bg-gray-50 p-4 rounded-lg mb-4">
               <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <p className="text-xs text-gray-500">Factura</p>
-                  <p className="font-mono font-bold">{selectedVenta.numero_factura}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-gray-500">Fecha</p>
-                  <p>{formatearFechaSV(selectedVenta.fecha_venta)}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-gray-500">Cliente</p>
-                  <p>{selectedVenta.cliente?.nombre || 'Cliente Mostrador'}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-gray-500">Vendedor</p>
-                  <p>{selectedVenta.usuario?.nombre_completo || 'Sistema'}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-gray-500">Método de pago</p>
-                  <p>{selectedVenta.metodo_pago}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-gray-500">Total</p>
-                  <p className="text-xl font-bold text-[#003366]">${selectedVenta.total.toFixed(2)}</p>
-                </div>
+                <div><p className="text-xs text-gray-500">Factura</p><p className="font-mono font-bold">{selectedVenta.numero_factura}</p></div>
+                <div><p className="text-xs text-gray-500">Fecha</p><p>{formatearFechaSV(selectedVenta.fecha_venta)}</p></div>
+                <div><p className="text-xs text-gray-500">Cliente</p><p>{selectedVenta.cliente?.nombre || 'Cliente Mostrador'}</p></div>
+                <div><p className="text-xs text-gray-500">Vendedor</p><p>{selectedVenta.usuario?.nombre_completo || 'Sistema'}</p></div>
+                <div><p className="text-xs text-gray-500">Método de pago</p><p>{selectedVenta.metodo_pago}</p></div>
+                <div><p className="text-xs text-gray-500">Total</p><p className="text-xl font-bold text-[#003366]">${selectedVenta.total.toFixed(2)}</p></div>
               </div>
             </div>
             <h4 className="font-bold mb-3">Productos</h4>
@@ -846,22 +778,13 @@ export default function HistorialVentasPage() {
               </table>
             </div>
             <div className="flex gap-3 mt-4">
-              <button
-                onClick={() => reimprimirTicket(selectedVenta)}
-                className="flex-1 bg-green-600 text-white py-2 rounded-lg hover:bg-green-700 flex items-center justify-center gap-2"
-              >
+              <button onClick={() => reimprimirTicket(selectedVenta)} className="flex-1 bg-green-600 text-white py-2 rounded-lg hover:bg-green-700 flex items-center justify-center gap-2">
                 <Printer size={18} /> Reimprimir Ticket
               </button>
-              <button
-                onClick={() => descargarPDF(selectedVenta)}
-                className="flex-1 bg-purple-600 text-white py-2 rounded-lg hover:bg-purple-700 flex items-center justify-center gap-2"
-              >
+              <button onClick={() => descargarPDF(selectedVenta)} className="flex-1 bg-purple-600 text-white py-2 rounded-lg hover:bg-purple-700 flex items-center justify-center gap-2">
                 <FileDown size={18} /> Descargar PDF
               </button>
-              <button
-                onClick={() => setShowModal(false)}
-                className="flex-1 border border-gray-300 py-2 rounded-lg hover:bg-gray-50"
-              >
+              <button onClick={() => setShowModal(false)} className="flex-1 border border-gray-300 py-2 rounded-lg hover:bg-gray-50">
                 Cerrar
               </button>
             </div>
