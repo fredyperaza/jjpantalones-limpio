@@ -40,6 +40,20 @@ interface VentaClienteData {
   cliente: { nombre: string } | null
 }
 
+interface ProductoExport {
+  Producto: string
+  'Cantidad Vendida': number
+  'Ingresos': string
+  'Precio Promedio': string
+}
+
+interface ClienteExport {
+  Cliente: string
+  Compras: number
+  'Total Gastado': string
+  'Ticket Promedio': string
+}
+
 export default function ReportesPage() {
   const [periodo, setPeriodo] = useState('mes')
   const [resumen, setResumen] = useState<ResumenVentas>({
@@ -53,10 +67,6 @@ export default function ReportesPage() {
   const [loading, setLoading] = useState(true)
   const [autorizado, setAutorizado] = useState(false)
   const router = useRouter()
-
-  // ============================================
-  // VERIFICAR ROL (solo admin y gerente)
-  // ============================================
 
   const verificarRol = useCallback(async () => {
     const { data: { session } } = await supabase.auth.getSession()
@@ -89,7 +99,6 @@ export default function ReportesPage() {
   const cargarReportes = useCallback(async () => {
     setLoading(true)
     try {
-      // Calcular fecha según período
       const hoy = new Date()
       let fechaInicio = new Date()
       
@@ -105,7 +114,6 @@ export default function ReportesPage() {
 
       const fechaInicioStr = fechaInicio.toISOString()
 
-      // 1. Resumen de ventas
       const { data: ventas } = await supabase
         .from('ventas')
         .select('total, subtotal')
@@ -116,7 +124,6 @@ export default function ReportesPage() {
       const totalVentas = ventasData?.length || 0
       const totalIngresos = ventasData?.reduce((sum, v) => sum + (v.total || 0), 0) || 0
       
-      // Calcular ganancia (estimada con 40% de margen)
       const totalGanancias = totalIngresos * 0.4
       const ticketPromedio = totalVentas > 0 ? totalIngresos / totalVentas : 0
 
@@ -127,7 +134,6 @@ export default function ReportesPage() {
         ticket_promedio: ticketPromedio
       })
 
-      // 2. Productos más vendidos
       const { data: detalles } = await supabase
         .from('detalle_ventas')
         .select(`
@@ -162,7 +168,6 @@ export default function ReportesPage() {
       productosArray.sort((a, b) => b.total_vendido - a.total_vendido)
       setProductosTop(productosArray.slice(0, 5))
 
-      // 3. Clientes que más compran
       const { data: clientesData } = await supabase
         .from('ventas')
         .select(`
@@ -205,10 +210,6 @@ export default function ReportesPage() {
     }
   }, [periodo])
 
-  // ============================================
-  // USEEFFECT CON VERIFICACIÓN DE ROL
-  // ============================================
-
   useEffect(() => {
     const iniciar = async () => {
       const tieneAcceso = await verificarRol()
@@ -226,26 +227,96 @@ export default function ReportesPage() {
     router.push('/login')
   }
 
+  // ============================================
+  // EXPORTACIÓN A EXCEL MEJORADA
+  // ============================================
   const exportarExcel = () => {
-    const datos = productosTop.map(p => ({
-      Producto: p.nombre,
-      'Cantidad Vendida': p.total_vendido,
-      'Ingresos': `$${p.total_ingresos.toFixed(2)}`
-    }))
-    
-    const csv = ['Producto,Cantidad Vendida,Ingresos']
-    datos.forEach(d => {
-      csv.push(`${d.Producto},${d['Cantidad Vendida']},${d['Ingresos']}`)
+  // Formatear fecha para el nombre del archivo
+  const fechaArchivo = new Date().toISOString().split('T')[0]
+  
+  // Período en texto
+  const periodoTexto = periodo === 'dia' ? 'Ultimo dia' : 
+                         periodo === 'semana' ? 'Ultima semana' : 
+                         periodo === 'mes' ? 'Ultimo mes' : 'Ultimo año'
+  
+  // 1. Datos de productos para exportar (sin index)
+  const productosExport: ProductoExport[] = productosTop.map((p) => ({
+    Producto: p.nombre,
+    'Cantidad Vendida': p.total_vendido,
+    'Ingresos': `$${p.total_ingresos.toFixed(2)}`,
+    'Precio Promedio': p.total_vendido > 0 ? `$${(p.total_ingresos / p.total_vendido).toFixed(2)}` : '$0.00'
+  }))
+
+  // 2. Datos de clientes para exportar (sin index)
+  const clientesExport: ClienteExport[] = clientesTop.map((c) => ({
+    Cliente: c.nombre,
+    Compras: c.total_compras,
+    'Total Gastado': `$${c.total_gastado.toFixed(2)}`,
+    'Ticket Promedio': c.total_compras > 0 ? `$${(c.total_gastado / c.total_compras).toFixed(2)}` : '$0.00'
+  }))
+
+  // 3. Construir contenido CSV con secciones
+  let csvContent = ''
+  
+  // Sección 1: Encabezado del reporte
+  csvContent += '========================================\n'
+  csvContent += 'JJPANTALONES - REPORTE DE VENTAS\n'
+  csvContent += '========================================\n'
+  csvContent += `Fecha de exportación,${new Date().toLocaleString('es-SV')}\n`
+  csvContent += `Período,${periodoTexto}\n`
+  csvContent += '\n'
+  
+  // Sección 2: Resumen general
+  csvContent += '=== RESUMEN GENERAL ===\n'
+  csvContent += `Total Ventas,${resumen.total_ventas}\n`
+  csvContent += `Ingresos Totales,$${resumen.total_ingresos.toFixed(2)}\n`
+  csvContent += `Ganancias Estimadas,$${resumen.total_ganancias.toFixed(2)}\n`
+  csvContent += `Ticket Promedio,$${resumen.ticket_promedio.toFixed(2)}\n`
+  csvContent += '\n'
+  
+  // Sección 3: Productos más vendidos
+  csvContent += '=== PRODUCTOS MÁS VENDIDOS ===\n'
+  if (productosExport.length > 0) {
+    const headersProductos = Object.keys(productosExport[0]) as (keyof ProductoExport)[]
+    csvContent += headersProductos.join(',') + '\n'
+    productosExport.forEach(row => {
+      const values = headersProductos.map(h => row[h])
+      csvContent += values.join(',') + '\n'
     })
-    
-    const blob = new Blob([csv.join('\n')], { type: 'text/csv' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `reporte_${periodo}_${new Date().toISOString().split('T')[0]}.csv`
-    a.click()
-    URL.revokeObjectURL(url)
+  } else {
+    csvContent += 'No hay datos disponibles\n'
   }
+  csvContent += '\n'
+  
+  // Sección 4: Clientes que más compran
+  csvContent += '=== CLIENTES QUE MÁS COMPRAN ===\n'
+  if (clientesExport.length > 0) {
+    const headersClientes = Object.keys(clientesExport[0]) as (keyof ClienteExport)[]
+    csvContent += headersClientes.join(',') + '\n'
+    clientesExport.forEach(row => {
+      const values = headersClientes.map(h => row[h])
+      csvContent += values.join(',') + '\n'
+    })
+  } else {
+    csvContent += 'No hay datos disponibles\n'
+  }
+  csvContent += '\n'
+  
+  // Sección 5: Pie de página
+  csvContent += '========================================\n'
+  csvContent += 'Sistema JJPANTALONES\n'
+  csvContent += 'Pantalones por Mayoreo | El Salvador 🇸🇻\n'
+  csvContent += '========================================\n'
+
+  // Crear y descargar archivo con BOM para soporte UTF-8
+  const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `reporte_${periodo}_${fechaArchivo}.csv`
+  a.click()
+  URL.revokeObjectURL(url)
+}
 
   if (!autorizado) {
     return (
@@ -315,7 +386,6 @@ export default function ReportesPage() {
           <div className="text-center py-12">Cargando reportes...</div>
         ) : (
           <>
-            {/* Tarjetas de resumen */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
               <div className="bg-white rounded-lg shadow p-6 border-l-4 border-[#003366]">
                 <div className="flex justify-between">
@@ -358,7 +428,6 @@ export default function ReportesPage() {
               </div>
             </div>
 
-            {/* Productos más vendidos */}
             <div className="bg-white rounded-lg shadow mb-8">
               <div className="px-6 py-4 border-b">
                 <h3 className="font-bold text-lg flex items-center gap-2">
@@ -393,7 +462,6 @@ export default function ReportesPage() {
               </div>
             </div>
 
-            {/* Clientes que más compran */}
             <div className="bg-white rounded-lg shadow">
               <div className="px-6 py-4 border-b">
                 <h3 className="font-bold text-lg flex items-center gap-2">
