@@ -426,9 +426,11 @@ export default function ProductosPage() {
                     onChange={(e) => setForm({ ...form, genero: e.target.value })}
                     className="w-full px-3 py-2 border rounded-lg"
                   >
-                    <option value="hombre">Hombre</option>
-                    <option value="mujer">Mujer</option>
-                    <option value="unisex">Unisex</option>
+                    <option value="hombre">👨 Hombre</option>
+                    <option value="mujer">👩 Mujer</option>
+                    <option value="unisex">👫 Unisex</option>
+                    <option value="niños">👦 Niños</option>
+                    <option value="niñas">👧 Niñas</option>
                   </select>
                 </div>
                 <div>
