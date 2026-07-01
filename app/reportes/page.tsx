@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
-import { TrendingUp, Package, DollarSign, Users, Download, FileText, FileSpreadsheet } from 'lucide-react'
+import { TrendingUp, Package, DollarSign, Users, FileText, FileSpreadsheet } from 'lucide-react'
 
 interface ResumenVentas {
   total_ventas: number
@@ -32,7 +32,7 @@ interface VentaData {
 interface DetalleData {
   cantidad: number
   precio_unitario: number
-  producto: { nombre: string } | null
+  producto: { nombre: string; precio_costo: number } | null
 }
 
 interface VentaClienteData {
@@ -123,30 +123,31 @@ export default function ReportesPage() {
       const ventasData = ventas as VentaData[] | null
       const totalVentas = ventasData?.length || 0
       const totalIngresos = ventasData?.reduce((sum, v) => sum + (v.total || 0), 0) || 0
-      const totalGanancias = totalIngresos * 0.4
       const ticketPromedio = totalVentas > 0 ? totalIngresos / totalVentas : 0
 
-      setResumen({
-        total_ventas: totalVentas,
-        total_ingresos: totalIngresos,
-        total_ganancias: totalGanancias,
-        ticket_promedio: ticketPromedio
-      })
-
+      // Traemos también precio_costo del producto para poder calcular
+      // la ganancia real (precio_venta_real - precio_costo) por cada línea vendida
       const { data: detalles } = await supabase
         .from('detalle_ventas')
         .select(`
           cantidad,
           precio_unitario,
-          producto:productos (nombre)
+          producto:productos (nombre, precio_costo)
         `)
         .gte('created_at', fechaInicioStr)
 
       const detallesData = detalles as DetalleData[] | null
       const productosMap = new Map<string, { cantidad: number, ingresos: number }>()
+      let totalGananciaReal = 0
 
       detallesData?.forEach((d) => {
         const nombre = d.producto?.nombre || 'Producto no disponible'
+        const costo = d.producto?.precio_costo ?? 0
+
+        // Ganancia de esta línea: (precio al que se vendió - costo) * cantidad
+        const gananciaLinea = (d.precio_unitario - costo) * d.cantidad
+        totalGananciaReal += gananciaLinea
+
         const existe = productosMap.get(nombre)
         if (existe) {
           existe.cantidad += d.cantidad
@@ -157,6 +158,13 @@ export default function ReportesPage() {
             ingresos: d.cantidad * d.precio_unitario
           })
         }
+      })
+
+      setResumen({
+        total_ventas: totalVentas,
+        total_ingresos: totalIngresos,
+        total_ganancias: totalGananciaReal,
+        ticket_promedio: ticketPromedio
       })
 
       const productosArray: ProductoTop[] = Array.from(productosMap.entries()).map(([nombre, datos]) => ({
@@ -273,7 +281,7 @@ export default function ReportesPage() {
     const tarjetas = [
       { label: 'Total Ventas',      valor: `${resumen.total_ventas}`,                  color: azul },
       { label: 'Ingresos Totales',  valor: `$${resumen.total_ingresos.toFixed(2)}`,    color: verde },
-      { label: 'Ganancias Est.',    valor: `$${resumen.total_ganancias.toFixed(2)}`,   color: amarillo },
+      { label: 'Ganancia Real',     valor: `$${resumen.total_ganancias.toFixed(2)}`,   color: amarillo },
       { label: 'Ticket Promedio',   valor: `$${resumen.ticket_promedio.toFixed(2)}`,   color: morado },
     ]
 
@@ -434,7 +442,7 @@ export default function ReportesPage() {
     csvContent += '=== RESUMEN GENERAL ===\n'
     csvContent += `Total Ventas,${resumen.total_ventas}\n`
     csvContent += `Ingresos Totales,$${resumen.total_ingresos.toFixed(2)}\n`
-    csvContent += `Ganancias Estimadas,$${resumen.total_ganancias.toFixed(2)}\n`
+    csvContent += `Ganancia Real,$${resumen.total_ganancias.toFixed(2)}\n`
     csvContent += `Ticket Promedio,$${resumen.ticket_promedio.toFixed(2)}\n\n`
 
     csvContent += '=== PRODUCTOS MAS VENDIDOS ===\n'
@@ -584,7 +592,7 @@ export default function ReportesPage() {
               <div className="bg-white rounded-lg shadow p-6 border-l-4 border-yellow-500">
                 <div className="flex justify-between">
                   <div>
-                    <p className="text-gray-500 text-sm">Ganancias Estimadas</p>
+                    <p className="text-gray-500 text-sm">Ganancia Real</p>
                     <p className="text-2xl font-bold text-yellow-600">${resumen.total_ganancias.toFixed(2)}</p>
                   </div>
                   <Package className="w-8 h-8 text-yellow-500" />
