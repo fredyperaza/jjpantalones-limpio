@@ -583,9 +583,10 @@ export default function NuevaVentaPage() {
 
             <div className="grid grid-cols-3 gap-3 mb-4">
               {tallasDisponibles.map((talla) => {
-                const tallasCount = tallasDisponibles.length
-                const stockPorTalla = Math.floor(productoTemporal.stock_actual / tallasCount)
-                const disponible = stockPorTalla > 0
+                // El stock_actual es del producto completo (todas las tallas juntas),
+                // no se sabe cuántas unidades son de cada talla específica.
+                // Por eso se permite vender cualquier talla mientras haya stock > 0.
+                const disponible = productoTemporal.stock_actual > 0
 
                 return (
                   <button
@@ -605,7 +606,7 @@ export default function NuevaVentaPage() {
                   >
                     <div className="text-lg font-bold">{talla}</div>
                     {disponible && (
-                      <div className="text-xs text-green-600">Stock: {stockPorTalla}</div>
+                      <div className="text-xs text-green-600">Stock: {productoTemporal.stock_actual}</div>
                     )}
                     {!disponible && (
                       <div className="text-xs text-red-500">Sin stock</div>
