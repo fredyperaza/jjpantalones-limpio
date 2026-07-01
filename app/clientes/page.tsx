@@ -80,16 +80,27 @@ export default function ClientesPage() {
     setLoading(true)
 
     try {
+      // Normalizamos: campos opcionales vacíos se mandan como null
+      // en vez de '' para no chocar con el constraint UNIQUE de numero_documento
+      // (dos strings vacíos '' se consideran duplicados, dos null no)
+      const payload = {
+        ...form,
+        numero_documento: form.numero_documento.trim() === '' ? null : form.numero_documento.trim(),
+        email: form.email.trim() === '' ? null : form.email.trim(),
+        telefono: form.telefono.trim() === '' ? null : form.telefono.trim(),
+        direccion: form.direccion.trim() === '' ? null : form.direccion.trim()
+      }
+
       if (editing) {
         const { error } = await supabase
           .from('clientes')
-          .update(form)
+          .update(payload)
           .eq('id', editing.id)
         if (error) throw error
       } else {
         const { error } = await supabase
           .from('clientes')
-          .insert([form])
+          .insert([payload])
         if (error) throw error
       }
 
@@ -106,8 +117,12 @@ export default function ClientesPage() {
       })
       await cargarClientes()
     } catch (err) {
-      const error = err as Error
-      alert(error.message || 'Error al guardar')
+      const error = err as { message?: string; code?: string }
+      if (error.code === '23505') {
+        alert('Ya existe un cliente registrado con ese número de documento.')
+      } else {
+        alert(error.message || 'Error al guardar')
+      }
     } finally {
       setLoading(false)
     }
