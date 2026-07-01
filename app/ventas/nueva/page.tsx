@@ -42,6 +42,9 @@ export default function NuevaVentaPage() {
   const [metodoPago, setMetodoPago] = useState('efectivo')
   const [loading, setLoading] = useState(false)
   const [autorizado, setAutorizado] = useState(false)
+  const [showTallaModal, setShowTallaModal] = useState(false)
+  const [productoTemporal, setProductoTemporal] = useState<Producto | null>(null)
+  const [tallasDisponibles, setTallasDisponibles] = useState<string[]>([])
   const router = useRouter()
   
   const nextIdRef = useRef(1)
@@ -99,7 +102,6 @@ export default function NuevaVentaPage() {
 
   const clienteSeleccionado = clienteId ? clientes.find(c => c.id === clienteId) || null : null
 
-  // Total simple (sin IVA)
   const total = carrito.reduce((sum, item) => sum + (item.cantidad * item.precio), 0)
 
   const generarNumeroFactura = useCallback(async () => {
@@ -137,15 +139,21 @@ export default function NuevaVentaPage() {
     p.talla.toLowerCase().includes(search.toLowerCase())
   )
 
-  const agregarAlCarrito = (producto: Producto) => {
-    const existente = carrito.find(item => item.productoId === producto.id)
+  // Función para agregar producto al carrito (con talla específica)
+  const agregarProductoAlCarrito = (producto: Producto, tallaSeleccionada?: string) => {
+    const tallaFinal = tallaSeleccionada || producto.talla
+    
+    const existente = carrito.find(item => 
+      item.productoId === producto.id && item.talla === tallaFinal
+    )
+    
     if (existente) {
       if (existente.cantidad + 1 > producto.stock_actual) {
         alert(`Solo hay ${producto.stock_actual} unidades disponibles`)
         return
       }
       setCarrito(carrito.map(item =>
-        item.productoId === producto.id
+        item.id === existente.id
           ? { ...item, cantidad: item.cantidad + 1, subtotal: (item.cantidad + 1) * item.precio }
           : item
       ))
@@ -154,13 +162,27 @@ export default function NuevaVentaPage() {
         id: generarIdUnico(),
         productoId: producto.id,
         nombre: producto.nombre,
-        talla: producto.talla,
+        talla: tallaFinal,
         color: producto.color,
         cantidad: 1,
         precio: producto.precio_venta,
         subtotal: producto.precio_venta
       }])
     }
+  }
+
+  const agregarAlCarrito = (producto: Producto) => {
+    // Verificar si el producto tiene múltiples tallas (separadas por coma)
+    if (producto.talla && producto.talla.includes(',')) {
+      setProductoTemporal(producto)
+      const tallas = producto.talla.split(',').map(t => t.trim()).filter(t => t !== '')
+      setTallasDisponibles(tallas)
+      setShowTallaModal(true)
+      return
+    }
+
+    // Si tiene una sola talla, agregar directamente
+    agregarProductoAlCarrito(producto)
   }
 
   const actualizarCantidad = (id: string, nuevaCantidad: number) => {
@@ -187,7 +209,6 @@ export default function NuevaVentaPage() {
     setCarrito(carrito.filter(item => item.id !== id))
   }
 
-  // Ticket SIN IVA y SIN NIT
   const imprimirTicket = (factura: string, cliente: Cliente | null, carritoItems: ItemCarrito[], totalVal: number, pagoMetodo: string) => {
     const fecha = new Date().toLocaleString('es-SV')
     
@@ -196,7 +217,7 @@ export default function NuevaVentaPage() {
     
     const itemsHtml = carritoItems.map(item => `
       <div style="margin-bottom: 8px;">
-        <div><strong>${item.cantidad}x</strong> ${item.nombre} (${item.talla}/${item.color})</div>
+        <div><strong>${item.cantidad}x</strong> ${item.nombre} <span style="color: #003366;">(Talla: ${item.talla})</span></div>
         <div style="margin-left: 20px; font-size: 11px;">Precio unitario: $${item.precio.toFixed(2)}</div>
         <div style="margin-left: 20px; font-size: 11px;">Subtotal: $${(item.cantidad * item.precio).toFixed(2)}</div>
       </div>
@@ -450,6 +471,67 @@ export default function NuevaVentaPage() {
           </div>
         </div>
       </div>
+
+      {/* Modal para seleccionar talla */}
+      {showTallaModal && productoTemporal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+            <h3 className="text-xl font-bold text-[#003366] mb-2">Seleccionar Talla</h3>
+            <p className="text-gray-600 mb-4">
+              Producto: <strong>{productoTemporal.nombre}</strong>
+            </p>
+            <p className="text-sm text-gray-500 mb-4">
+              ¿Qué talla va a vender?
+            </p>
+            
+            <div className="grid grid-cols-3 gap-3 mb-4">
+              {tallasDisponibles.map((talla) => {
+                // Calcular stock estimado por talla
+                const tallasCount = tallasDisponibles.length
+                const stockPorTalla = Math.floor(productoTemporal.stock_actual / tallasCount)
+                const disponible = stockPorTalla > 0
+                
+                return (
+                  <button
+                    key={talla}
+                    onClick={() => {
+                      agregarProductoAlCarrito(productoTemporal, talla)
+                      setShowTallaModal(false)
+                      setProductoTemporal(null)
+                      setTallasDisponibles([])
+                    }}
+                    disabled={!disponible}
+                    className={`py-3 rounded-lg border-2 transition ${
+                      disponible 
+                        ? 'border-[#003366] text-[#003366] hover:bg-[#003366] hover:text-white' 
+                        : 'border-gray-200 text-gray-400 cursor-not-allowed'
+                    }`}
+                  >
+                    <div className="text-lg font-bold">{talla}</div>
+                    {disponible && (
+                      <div className="text-xs text-green-600">Stock: {stockPorTalla}</div>
+                    )}
+                    {!disponible && (
+                      <div className="text-xs text-red-500">Sin stock</div>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+            
+            <button
+              onClick={() => {
+                setShowTallaModal(false)
+                setProductoTemporal(null)
+                setTallasDisponibles([])
+              }}
+              className="w-full border border-gray-300 py-2 rounded-lg hover:bg-gray-50 transition"
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

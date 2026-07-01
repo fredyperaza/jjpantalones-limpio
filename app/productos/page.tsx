@@ -54,10 +54,6 @@ export default function ProductosPage() {
     stock_minimo: 5
   })
 
-  // ============================================
-  // VERIFICAR ROL (solo admin y gerente)
-  // ============================================
-
   const verificarRol = useCallback(async () => {
     const { data: { session } } = await supabase.auth.getSession()
     if (!session) {
@@ -78,10 +74,6 @@ export default function ProductosPage() {
 
     return true
   }, [router])
-
-  // ============================================
-  // FUNCIONES
-  // ============================================
 
   const verificarSesion = useCallback(async () => {
     const { data } = await supabase.auth.getSession()
@@ -119,10 +111,6 @@ export default function ProductosPage() {
       console.log('7. Loading finalizado')
     }
   }, [])
-
-  // ============================================
-  // USEEFFECT CON VERIFICACIÓN DE ROL
-  // ============================================
 
   useEffect(() => {
     const iniciar = async () => {
@@ -296,7 +284,6 @@ export default function ProductosPage() {
           </div>
         </div>
 
-        {/* Buscador */}
         <div className="mb-6 relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
           <input
@@ -308,7 +295,6 @@ export default function ProductosPage() {
           />
         </div>
 
-        {/* Tabla de productos */}
         <div className="bg-white rounded-lg shadow overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -382,10 +368,34 @@ export default function ProductosPage() {
         )}
       </main>
 
-      {/* Modal para agregar/editar */}
+      {/* Modal para agregar/editar CON BOTÓN X */}
       {showModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto relative">
+            {/* Botón de cerrar (X) */}
+            <button
+              onClick={() => {
+                setShowModal(false)
+                setEditing(null)
+                setForm({
+                  nombre: '',
+                  talla: '',
+                  color: '',
+                  genero: 'unisex',
+                  marca: '',
+                  codigo_barras: '',
+                  precio_costo: 0,
+                  precio_venta: 0,
+                  stock_actual: 0,
+                  stock_minimo: 5
+                })
+              }}
+              className="absolute top-3 right-3 text-gray-400 hover:text-gray-600 transition text-2xl w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100"
+              title="Cerrar"
+            >
+              ×
+            </button>
+
             <h3 className="text-xl font-bold mb-4">{editing ? 'Editar' : 'Nuevo'} Producto</h3>
             <form onSubmit={handleSubmit}>
               <div className="mb-3">
