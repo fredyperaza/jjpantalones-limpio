@@ -230,6 +230,11 @@ export default function NuevaVentaPage() {
   const imprimirTicket = (factura: string, cliente: Cliente | null, carritoItems: ItemCarrito[], totalVal: number, pagoMetodo: string) => {
     const fecha = new Date().toLocaleString('es-SV')
 
+    // Se recalcula el total directamente desde los productos del ticket,
+    // en vez de confiar en el parámetro totalVal, para evitar que el total
+    // mostrado quede desincronizado de la lista real de productos.
+    const totalReal = carritoItems.reduce((sum, item) => sum + (item.cantidad * item.precio), 0)
+
     const duenaNombre = "JJPantalones"
     const duenaTelefono = "7099-7994"
 
@@ -297,7 +302,7 @@ export default function NuevaVentaPage() {
 
           <div class="line"></div>
 
-          <div class="info-row total"><span>TOTAL:</span><span><strong>$${totalVal.toFixed(2)}</strong></span></div>
+          <div class="info-row total"><span>TOTAL:</span><span><strong>$${totalReal.toFixed(2)}</strong></span></div>
 
           <div class="line"></div>
 
@@ -354,16 +359,20 @@ export default function NuevaVentaPage() {
 
       const factura = await generarNumeroFactura()
 
+      // Se recalcula el total directamente desde el carrito actual,
+      // para evitar guardar un total desincronizado de los productos reales.
+      const totalReal = carrito.reduce((sum, item) => sum + (item.cantidad * item.precio), 0)
+
       const { data: venta, error: errorVenta } = await supabase
         .from('ventas')
         .insert({
           numero_factura: factura,
           id_cliente: clienteFinal || null,
           id_usuario: user.id,
-          subtotal: total,
+          subtotal: totalReal,
           descuento: 0,
           impuesto: 0,
-          total: total,
+          total: totalReal,
           metodo_pago: metodoPago,
           estado: 'completada'
         })
@@ -381,7 +390,7 @@ export default function NuevaVentaPage() {
         })
       }
 
-      imprimirTicket(factura, clienteInfo, carrito, total, metodoPago)
+      imprimirTicket(factura, clienteInfo, carrito, totalReal, metodoPago)
 
       setTimeout(() => {
         setCarrito([])
