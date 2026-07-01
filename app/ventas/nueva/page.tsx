@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
-import { Search, ShoppingCart, Printer } from 'lucide-react'
+import { Search, ShoppingCart, Printer, Plus, Minus, Trash2 } from 'lucide-react'
 
 interface Producto {
   id: string
@@ -12,7 +12,7 @@ interface Producto {
   color: string
   precio_venta: number
   stock_actual: number
-  codigo_barras?: string  // ← Agregado para búsqueda por código
+  codigo_barras?: string
 }
 
 interface ItemCarrito {
@@ -47,7 +47,7 @@ export default function NuevaVentaPage() {
   const [productoTemporal, setProductoTemporal] = useState<Producto | null>(null)
   const [tallasDisponibles, setTallasDisponibles] = useState<string[]>([])
   const router = useRouter()
-  
+
   const nextIdRef = useRef(1)
 
   const verificarRol = useCallback(async () => {
@@ -84,17 +84,18 @@ export default function NuevaVentaPage() {
     }
   }, [router])
 
-  // ============================================
-  // ✅ CARGAR PRODUCTOS (CORREGIDO)
-  // - Muestra TODOS los productos activos
-  // - Incluye codigo_barras para búsqueda
-  // ============================================
+  // Incluye codigo_barras y ya NO filtra por stock > 0 aquí,
+  // así se puede ver el producto sin stock (queda deshabilitado en la UI)
   const cargarProductos = useCallback(async () => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('productos')
       .select('id, nombre, talla, color, precio_venta, stock_actual, codigo_barras')
       .eq('activo', true)
-      // ✅ QUITADO .gt('stock_actual', 0) - muestra productos con stock 0 también
+
+    if (error) {
+      console.error('Error al cargar productos:', error)
+    }
+
     setProductos(data || [])
   }, [])
 
@@ -140,24 +141,26 @@ export default function NuevaVentaPage() {
     iniciar()
   }, [verificarRol, verificarSesion, cargarProductos, cargarClientes])
 
-  // ============================================
-  // ✅ FILTRADO DE PRODUCTOS (CORREGIDO)
-  // - Búsqueda por nombre, talla, color, código de barras
-  // ============================================
-  const productosFiltrados = productos.filter(p =>
-    p.nombre.toLowerCase().includes(search.toLowerCase()) ||
-    p.talla?.toLowerCase().includes(search.toLowerCase()) ||
-    p.color?.toLowerCase().includes(search.toLowerCase()) ||
-    (p.codigo_barras && p.codigo_barras.toLowerCase().includes(search.toLowerCase()))
-  )
+  // Búsqueda por nombre, talla, color y código de barras
+  const productosFiltrados = productos.filter(p => {
+    const texto = search.toLowerCase().trim()
+    if (!texto) return true
+
+    return (
+      p.nombre?.toLowerCase().includes(texto) ||
+      p.talla?.toLowerCase().includes(texto) ||
+      p.color?.toLowerCase().includes(texto) ||
+      (p.codigo_barras ? p.codigo_barras.toLowerCase().includes(texto) : false)
+    )
+  })
 
   const agregarProductoAlCarrito = (producto: Producto, tallaSeleccionada?: string) => {
     const tallaFinal = tallaSeleccionada || producto.talla
-    
-    const existente = carrito.find(item => 
+
+    const existente = carrito.find(item =>
       item.productoId === producto.id && item.talla === tallaFinal
     )
-    
+
     if (existente) {
       if (existente.cantidad + 1 > producto.stock_actual) {
         alert(`Solo hay ${producto.stock_actual} unidades disponibles`)
@@ -184,10 +187,11 @@ export default function NuevaVentaPage() {
 
   const agregarAlCarrito = (producto: Producto) => {
     if (producto.stock_actual === 0) {
-      alert(`Producto sin stock disponible`)
+      alert('Producto sin stock disponible')
       return
     }
 
+    // Verificar si el producto tiene múltiples tallas (separadas por coma)
     if (producto.talla && producto.talla.includes(',')) {
       setProductoTemporal(producto)
       const tallas = producto.talla.split(',').map(t => t.trim()).filter(t => t !== '')
@@ -225,10 +229,10 @@ export default function NuevaVentaPage() {
 
   const imprimirTicket = (factura: string, cliente: Cliente | null, carritoItems: ItemCarrito[], totalVal: number, pagoMetodo: string) => {
     const fecha = new Date().toLocaleString('es-SV')
-    
+
     const duenaNombre = "JJPantalones"
     const duenaTelefono = "7099-7994"
-    
+
     const itemsHtml = carritoItems.map(item => `
       <div style="margin-bottom: 8px;">
         <div><strong>${item.cantidad}x</strong> ${item.nombre} <span style="color: #003366;">(Talla: ${item.talla})</span></div>
@@ -236,7 +240,7 @@ export default function NuevaVentaPage() {
         <div style="margin-left: 20px; font-size: 11px;">Subtotal: $${(item.cantidad * item.precio).toFixed(2)}</div>
       </div>
     `).join('')
-    
+
     const html = `
       <!DOCTYPE html>
       <html>
@@ -273,34 +277,34 @@ export default function NuevaVentaPage() {
           <div class="subtitle">El Salvador 🇸🇻</div>
           <div class="subtitle">📍 Avenida Independencia Sur, Callejón del Carmen</div>
           <div class="subtitle">📞 ${duenaTelefono} | Contacto: ${duenaNombre}</div>
-          
+
           <div class="line"></div>
-          
+
           <div class="info-row"><span>FACTURA:</span><span><strong>${factura}</strong></span></div>
           <div class="info-row"><span>FECHA:</span><span>${fecha}</span></div>
           <div class="info-row"><span>CAJA:</span><span>Principal</span></div>
-          
+
           <div class="line"></div>
-          
+
           <div class="info-row"><span>CLIENTE:</span><span><strong>${cliente?.nombre || 'Cliente Mostrador'}</strong></span></div>
           ${cliente?.numero_documento ? `<div class="info-row"><span>DOCUMENTO:</span><span>${cliente.tipo_documento}: ${cliente.numero_documento}</span></div>` : ''}
           ${cliente?.telefono ? `<div class="info-row"><span>TELÉFONO:</span><span>${cliente.telefono}</span></div>` : ''}
-          
+
           <div class="line"></div>
-          
+
           <div style="font-weight: bold; margin-bottom: 5px;">PRODUCTOS:</div>
           ${itemsHtml}
-          
+
           <div class="line"></div>
-          
+
           <div class="info-row total"><span>TOTAL:</span><span><strong>$${totalVal.toFixed(2)}</strong></span></div>
-          
+
           <div class="line"></div>
-          
+
           <div class="info-row"><span>MÉTODO DE PAGO:</span><span>${pagoMetodo === 'efectivo' ? '💵 Efectivo' : pagoMetodo === 'tarjeta' ? '💳 Tarjeta' : '🏦 Transferencia'}</span></div>
-          
+
           <div class="line"></div>
-          
+
           <div class="gracias">
             ¡Gracias por su compra!<br/>
             Visítenos nuevamente
@@ -313,7 +317,7 @@ export default function NuevaVentaPage() {
       </body>
       </html>
     `
-    
+
     const ventana = window.open('', '_blank', 'width=400,height=600')
     if (ventana) {
       ventana.document.write(html)
@@ -349,8 +353,7 @@ export default function NuevaVentaPage() {
       }
 
       const factura = await generarNumeroFactura()
-      console.log('Factura generada:', factura)
-      
+
       const { data: venta, error: errorVenta } = await supabase
         .from('ventas')
         .insert({
@@ -379,7 +382,7 @@ export default function NuevaVentaPage() {
       }
 
       imprimirTicket(factura, clienteInfo, carrito, total, metodoPago)
-      
+
       setTimeout(() => {
         setCarrito([])
         setClienteId('')
@@ -399,7 +402,14 @@ export default function NuevaVentaPage() {
   }
 
   if (!autorizado) {
-    return <div className="min-h-screen flex items-center justify-center bg-gray-100"><div className="text-center"><div className="w-12 h-12 border-4 border-[#003366] border-t-transparent rounded-full animate-spin mx-auto mb-4"></div><p className="text-gray-500">Verificando permisos...</p></div></div>
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-100">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-[#003366] border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-500">Verificando permisos...</p>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -428,30 +438,38 @@ export default function NuevaVentaPage() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2">
             <div className="bg-white rounded-lg shadow p-4">
-              <h2 className="text-xl font-bold text-[#003366] mb-4">Productos</h2>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl font-bold text-[#003366]">Productos</h2>
+                <span className="text-xs text-gray-400">
+                  {productosFiltrados.length} de {productos.length}
+                </span>
+              </div>
               <div className="relative mb-4">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
                 <input
                   type="text"
-                  placeholder="Buscar por nombre, talla o código..."
+                  placeholder="Buscar por nombre, talla, color o código de barras..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   className="w-full pl-10 pr-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#003366]"
+                  autoFocus
                 />
               </div>
-              {/* ✅ QUITADO .slice(0, 30) - muestra TODOS los productos */}
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3 max-h-125 overflow-y-auto">
                 {productosFiltrados.map((producto) => (
                   <button
                     key={producto.id}
                     onClick={() => agregarAlCarrito(producto)}
+                    disabled={producto.stock_actual === 0}
                     className={`border rounded-lg p-3 text-left hover:bg-gray-50 hover:border-[#003366] transition ${
                       producto.stock_actual === 0 ? 'opacity-50 cursor-not-allowed' : ''
                     }`}
-                    disabled={producto.stock_actual === 0}
                   >
                     <p className="font-semibold text-sm">{producto.nombre}</p>
                     <p className="text-xs text-gray-500">{producto.talla} / {producto.color}</p>
+                    {producto.codigo_barras && (
+                      <p className="text-[10px] text-gray-400">Cód: {producto.codigo_barras}</p>
+                    )}
                     <p className="text-[#003366] font-bold mt-1">${producto.precio_venta}</p>
                     <p className={`text-xs ${producto.stock_actual === 0 ? 'text-red-500' : 'text-gray-400'}`}>
                       {producto.stock_actual === 0 ? 'Sin stock' : `Stock: ${producto.stock_actual}`}
@@ -459,7 +477,9 @@ export default function NuevaVentaPage() {
                   </button>
                 ))}
                 {productosFiltrados.length === 0 && (
-                  <p className="text-gray-500 col-span-3 text-center py-8">No hay productos disponibles</p>
+                  <p className="text-gray-500 col-span-full text-center py-8">
+                    No hay productos que coincidan con la búsqueda
+                  </p>
                 )}
               </div>
             </div>
@@ -467,7 +487,10 @@ export default function NuevaVentaPage() {
 
           <div className="lg:col-span-1">
             <div className="bg-white rounded-lg shadow p-4 sticky top-20">
-              <div className="flex items-center gap-2 mb-4"><ShoppingCart className="text-[#003366]" /><h2 className="text-xl font-bold text-[#003366]">Carrito</h2></div>
+              <div className="flex items-center gap-2 mb-4">
+                <ShoppingCart className="text-[#003366]" />
+                <h2 className="text-xl font-bold text-[#003366]">Carrito</h2>
+              </div>
               <div className="mb-4">
                 <label className="block text-sm font-medium mb-1">Cliente</label>
                 <select
@@ -528,7 +551,10 @@ export default function NuevaVentaPage() {
                 )}
               </div>
               <div className="border-t pt-3 mt-3">
-                <div className="flex justify-between"><span>TOTAL:</span><span className="text-[#003366] font-bold text-xl">${total.toFixed(2)}</span></div>
+                <div className="flex justify-between">
+                  <span>TOTAL:</span>
+                  <span className="text-[#003366] font-bold text-xl">${total.toFixed(2)}</span>
+                </div>
               </div>
               <button
                 onClick={finalizarVenta}
@@ -554,13 +580,13 @@ export default function NuevaVentaPage() {
             <p className="text-sm text-gray-500 mb-4">
               ¿Qué talla va a vender?
             </p>
-            
+
             <div className="grid grid-cols-3 gap-3 mb-4">
               {tallasDisponibles.map((talla) => {
                 const tallasCount = tallasDisponibles.length
                 const stockPorTalla = Math.floor(productoTemporal.stock_actual / tallasCount)
                 const disponible = stockPorTalla > 0
-                
+
                 return (
                   <button
                     key={talla}
@@ -572,8 +598,8 @@ export default function NuevaVentaPage() {
                     }}
                     disabled={!disponible}
                     className={`py-3 rounded-lg border-2 transition ${
-                      disponible 
-                        ? 'border-[#003366] text-[#003366] hover:bg-[#003366] hover:text-white' 
+                      disponible
+                        ? 'border-[#003366] text-[#003366] hover:bg-[#003366] hover:text-white'
                         : 'border-gray-200 text-gray-400 cursor-not-allowed'
                     }`}
                   >
@@ -588,7 +614,7 @@ export default function NuevaVentaPage() {
                 )
               })}
             </div>
-            
+
             <button
               onClick={() => {
                 setShowTallaModal(false)
