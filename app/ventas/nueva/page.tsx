@@ -12,6 +12,7 @@ interface Producto {
   color: string
   precio_venta: number
   stock_actual: number
+  codigo_barras?: string  // ← Agregado para búsqueda por código
 }
 
 interface ItemCarrito {
@@ -83,12 +84,17 @@ export default function NuevaVentaPage() {
     }
   }, [router])
 
+  // ============================================
+  // ✅ CARGAR PRODUCTOS (CORREGIDO)
+  // - Muestra TODOS los productos activos
+  // - Incluye codigo_barras para búsqueda
+  // ============================================
   const cargarProductos = useCallback(async () => {
     const { data } = await supabase
       .from('productos')
-      .select('id, nombre, talla, color, precio_venta, stock_actual')
+      .select('id, nombre, talla, color, precio_venta, stock_actual, codigo_barras')
       .eq('activo', true)
-      .gt('stock_actual', 0)
+      // ✅ QUITADO .gt('stock_actual', 0) - muestra productos con stock 0 también
     setProductos(data || [])
   }, [])
 
@@ -134,12 +140,17 @@ export default function NuevaVentaPage() {
     iniciar()
   }, [verificarRol, verificarSesion, cargarProductos, cargarClientes])
 
+  // ============================================
+  // ✅ FILTRADO DE PRODUCTOS (CORREGIDO)
+  // - Búsqueda por nombre, talla, color, código de barras
+  // ============================================
   const productosFiltrados = productos.filter(p =>
     p.nombre.toLowerCase().includes(search.toLowerCase()) ||
-    p.talla.toLowerCase().includes(search.toLowerCase())
+    p.talla?.toLowerCase().includes(search.toLowerCase()) ||
+    p.color?.toLowerCase().includes(search.toLowerCase()) ||
+    (p.codigo_barras && p.codigo_barras.toLowerCase().includes(search.toLowerCase()))
   )
 
-  // Función para agregar producto al carrito (con talla específica)
   const agregarProductoAlCarrito = (producto: Producto, tallaSeleccionada?: string) => {
     const tallaFinal = tallaSeleccionada || producto.talla
     
@@ -172,7 +183,11 @@ export default function NuevaVentaPage() {
   }
 
   const agregarAlCarrito = (producto: Producto) => {
-    // Verificar si el producto tiene múltiples tallas (separadas por coma)
+    if (producto.stock_actual === 0) {
+      alert(`Producto sin stock disponible`)
+      return
+    }
+
     if (producto.talla && producto.talla.includes(',')) {
       setProductoTemporal(producto)
       const tallas = producto.talla.split(',').map(t => t.trim()).filter(t => t !== '')
@@ -181,7 +196,6 @@ export default function NuevaVentaPage() {
       return
     }
 
-    // Si tiene una sola talla, agregar directamente
     agregarProductoAlCarrito(producto)
   }
 
@@ -417,17 +431,36 @@ export default function NuevaVentaPage() {
               <h2 className="text-xl font-bold text-[#003366] mb-4">Productos</h2>
               <div className="relative mb-4">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
-                <input type="text" placeholder="Buscar por nombre o talla..." value={search} onChange={(e) => setSearch(e.target.value)} className="w-full pl-10 pr-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#003366]" />
+                <input
+                  type="text"
+                  placeholder="Buscar por nombre, talla o código..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#003366]"
+                />
               </div>
+              {/* ✅ QUITADO .slice(0, 30) - muestra TODOS los productos */}
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3 max-h-125 overflow-y-auto">
-                {productosFiltrados.slice(0, 30).map((producto) => (
-                  <button key={producto.id} onClick={() => agregarAlCarrito(producto)} className="border rounded-lg p-3 text-left hover:bg-gray-50 hover:border-[#003366] transition">
+                {productosFiltrados.map((producto) => (
+                  <button
+                    key={producto.id}
+                    onClick={() => agregarAlCarrito(producto)}
+                    className={`border rounded-lg p-3 text-left hover:bg-gray-50 hover:border-[#003366] transition ${
+                      producto.stock_actual === 0 ? 'opacity-50 cursor-not-allowed' : ''
+                    }`}
+                    disabled={producto.stock_actual === 0}
+                  >
                     <p className="font-semibold text-sm">{producto.nombre}</p>
                     <p className="text-xs text-gray-500">{producto.talla} / {producto.color}</p>
                     <p className="text-[#003366] font-bold mt-1">${producto.precio_venta}</p>
-                    <p className="text-xs text-gray-400">Stock: {producto.stock_actual}</p>
+                    <p className={`text-xs ${producto.stock_actual === 0 ? 'text-red-500' : 'text-gray-400'}`}>
+                      {producto.stock_actual === 0 ? 'Sin stock' : `Stock: ${producto.stock_actual}`}
+                    </p>
                   </button>
                 ))}
+                {productosFiltrados.length === 0 && (
+                  <p className="text-gray-500 col-span-3 text-center py-8">No hay productos disponibles</p>
+                )}
               </div>
             </div>
           </div>
@@ -437,36 +470,74 @@ export default function NuevaVentaPage() {
               <div className="flex items-center gap-2 mb-4"><ShoppingCart className="text-[#003366]" /><h2 className="text-xl font-bold text-[#003366]">Carrito</h2></div>
               <div className="mb-4">
                 <label className="block text-sm font-medium mb-1">Cliente</label>
-                <select value={clienteId} onChange={(e) => setClienteId(e.target.value)} className="w-full px-3 py-2 border rounded-lg">
+                <select
+                  value={clienteId}
+                  onChange={(e) => setClienteId(e.target.value)}
+                  className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#003366]"
+                >
                   <option value="">Cliente Mostrador (por defecto)</option>
                   {clientes.map((c) => (<option key={c.id} value={c.id}>{c.nombre}</option>))}
                 </select>
               </div>
               <div className="mb-4">
                 <label className="block text-sm font-medium mb-1">Método de pago</label>
-                <select value={metodoPago} onChange={(e) => setMetodoPago(e.target.value)} className="w-full px-3 py-2 border rounded-lg">
+                <select
+                  value={metodoPago}
+                  onChange={(e) => setMetodoPago(e.target.value)}
+                  className="w-full px-3 py-2 border rounded-lg"
+                >
                   <option value="efectivo">💵 Efectivo</option>
                   <option value="tarjeta">💳 Tarjeta</option>
                   <option value="transferencia">🏦 Transferencia</option>
                 </select>
               </div>
               <div className="border-t pt-3 max-h-75 overflow-y-auto">
-                {carrito.map((item) => (
-                  <div key={item.id} className="flex justify-between items-center py-2 border-b">
-                    <div className="flex-1"><p className="font-medium text-sm">{item.nombre}</p><p className="text-xs text-gray-500">{item.talla}/{item.color}</p><p className="text-xs">${item.precio} c/u</p></div>
-                    <div className="flex items-center gap-2">
-                      <button onClick={() => actualizarCantidad(item.id, item.cantidad - 1)} className="w-7 h-7 bg-gray-200 rounded-full">-</button>
-                      <span className="w-8 text-center">{item.cantidad}</span>
-                      <button onClick={() => actualizarCantidad(item.id, item.cantidad + 1)} className="w-7 h-7 bg-gray-200 rounded-full">+</button>
-                      <button onClick={() => eliminarDelCarrito(item.id)} className="text-red-500 ml-2">🗑️</button>
+                {carrito.length === 0 ? (
+                  <p className="text-gray-400 text-center py-8">Carrito vacío</p>
+                ) : (
+                  carrito.map((item) => (
+                    <div key={item.id} className="flex justify-between items-center py-2 border-b">
+                      <div className="flex-1">
+                        <p className="font-medium text-sm">{item.nombre}</p>
+                        <p className="text-xs text-gray-500">{item.talla} / {item.color}</p>
+                        <p className="text-xs">${item.precio} c/u</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => actualizarCantidad(item.id, item.cantidad - 1)}
+                          className="w-7 h-7 bg-gray-200 rounded-full flex items-center justify-center hover:bg-gray-300"
+                        >
+                          <Minus size={14} />
+                        </button>
+                        <span className="w-8 text-center">{item.cantidad}</span>
+                        <button
+                          onClick={() => actualizarCantidad(item.id, item.cantidad + 1)}
+                          className="w-7 h-7 bg-gray-200 rounded-full flex items-center justify-center hover:bg-gray-300"
+                        >
+                          <Plus size={14} />
+                        </button>
+                        <button
+                          onClick={() => eliminarDelCarrito(item.id)}
+                          className="text-red-500 ml-2"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))
+                )}
               </div>
               <div className="border-t pt-3 mt-3">
                 <div className="flex justify-between"><span>TOTAL:</span><span className="text-[#003366] font-bold text-xl">${total.toFixed(2)}</span></div>
               </div>
-              <button onClick={finalizarVenta} disabled={loading || carrito.length === 0} className="mt-4 w-full bg-[#003366] text-white py-3 rounded-lg hover:bg-[#002244] disabled:opacity-50 flex items-center justify-center gap-2"><Printer size={18} />{loading ? 'Procesando...' : 'Finalizar Venta'}</button>
+              <button
+                onClick={finalizarVenta}
+                disabled={loading || carrito.length === 0}
+                className="mt-4 w-full bg-[#003366] text-white py-3 rounded-lg hover:bg-[#002244] disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                <Printer size={18} />
+                {loading ? 'Procesando...' : 'Finalizar Venta'}
+              </button>
             </div>
           </div>
         </div>
@@ -486,7 +557,6 @@ export default function NuevaVentaPage() {
             
             <div className="grid grid-cols-3 gap-3 mb-4">
               {tallasDisponibles.map((talla) => {
-                // Calcular stock estimado por talla
                 const tallasCount = tallasDisponibles.length
                 const stockPorTalla = Math.floor(productoTemporal.stock_actual / tallasCount)
                 const disponible = stockPorTalla > 0
