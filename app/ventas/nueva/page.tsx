@@ -223,6 +223,7 @@ export default function NuevaVentaPage() {
     setCarrito(carrito.filter(item => item.id !== id))
   }
 
+  // ✅ CORREGIDO: Mostrar solo la talla seleccionada en el ticket
   const imprimirTicket = (factura: string, cliente: Cliente | null, carritoItems: ItemCarrito[], totalVal: number, pagoMetodo: string) => {
     const fecha = new Date().toLocaleString('es-SV')
 
@@ -231,13 +232,22 @@ export default function NuevaVentaPage() {
     const duenaNombre = "JJPantalones"
     const duenaTelefono = "7099-7994"
 
-    const itemsHtml = carritoItems.map(item => `
-      <div style="margin-bottom: 8px;">
-        <div><strong>${item.cantidad}x</strong> ${item.nombre} <span style="color: #003366;">(Talla: ${item.talla})</span></div>
-        <div style="margin-left: 20px; font-size: 11px;">Precio unitario: $${item.precio.toFixed(2)}</div>
-        <div style="margin-left: 20px; font-size: 11px;">Subtotal: $${(item.cantidad * item.precio).toFixed(2)}</div>
-      </div>
-    `).join('')
+    // ✅ CORREGIDO: Si la talla tiene comas, mostrar solo la seleccionada
+    const itemsHtml = carritoItems.map(item => {
+      // Si la talla tiene comas, es porque es múltiple, mostrar solo la seleccionada
+      let tallaMostrar = item.talla
+      if (tallaMostrar && tallaMostrar.includes(',')) {
+        tallaMostrar = tallaMostrar.split(',')[0].trim()
+      }
+      
+      return `
+        <div style="margin-bottom: 8px;">
+          <div><strong>${item.cantidad}x</strong> ${item.nombre} <span style="color: #003366;">(Talla: ${tallaMostrar})</span></div>
+          <div style="margin-left: 20px; font-size: 11px;">Precio unitario: $${item.precio.toFixed(2)}</div>
+          <div style="margin-left: 20px; font-size: 11px;">Subtotal: $${(item.cantidad * item.precio).toFixed(2)}</div>
+        </div>
+      `
+    }).join('')
 
     const html = `
       <!DOCTYPE html>
