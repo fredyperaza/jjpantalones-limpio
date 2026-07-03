@@ -323,7 +323,7 @@ export default function NuevaVentaPage() {
     }
   }
 
-  // ✅ FUNCIÓN FINALIZAR VENTA COMPLETAMENTE CORREGIDA
+  // ✅ FUNCIÓN FINALIZAR VENTA CORREGIDA - SIN subtotal en el INSERT
   const finalizarVenta = async () => {
     if (carrito.length === 0) {
       alert('Agregue productos al carrito')
@@ -358,7 +358,7 @@ export default function NuevaVentaPage() {
           .from('clientes')
           .select('id, nombre, telefono, numero_documento, tipo_documento')
           .eq('nombre', 'Cliente Mostrador')
-          .maybeSingle()  // ✅ Cambiado de .single() a .maybeSingle()
+          .maybeSingle()
 
         if (mostradorError) {
           console.error('Error al buscar Cliente Mostrador:', mostradorError)
@@ -386,7 +386,7 @@ export default function NuevaVentaPage() {
           } else if (nuevoMostrador) {
             clienteFinal = nuevoMostrador.id
             clienteInfo = nuevoMostrador as Cliente
-            await cargarClientes()  // ✅ Recargar lista de clientes
+            await cargarClientes()
           }
         }
       }
@@ -413,7 +413,7 @@ export default function NuevaVentaPage() {
 
       if (errorVenta) throw errorVenta
 
-      // 2. Insertar detalles con subtotal y manejo de errores
+      // 2. Insertar detalles SIN subtotal (es columna generada en la BD)
       let erroresDetalle = false
       for (const item of carrito) {
         const { error: errorDetalle } = await supabase
@@ -422,8 +422,8 @@ export default function NuevaVentaPage() {
             id_venta: venta.id,
             id_producto: item.productoId,
             cantidad: item.cantidad,
-            precio_unitario: item.precio,
-            subtotal: item.cantidad * item.precio  // ✅ AGREGADO: subtotal
+            precio_unitario: item.precio
+            // ✅ subtotal NO se incluye - la BD lo calcula automáticamente
           })
 
         if (errorDetalle) {
@@ -443,7 +443,7 @@ export default function NuevaVentaPage() {
         return
       }
 
-      // 3. ✅ Actualizar el stock de los productos
+      // 3. ✅ Actualizar el stock de los productos (solo si el trigger no existe o como respaldo)
       for (const item of carrito) {
         const producto = productos.find(p => p.id === item.productoId)
         if (producto) {
