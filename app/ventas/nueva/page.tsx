@@ -46,6 +46,8 @@ export default function NuevaVentaPage() {
   const [showTallaModal, setShowTallaModal] = useState(false)
   const [productoTemporal, setProductoTemporal] = useState<Producto | null>(null)
   const [tallasDisponibles, setTallasDisponibles] = useState<string[]>([])
+  const [esEnvio, setEsEnvio] = useState(false)
+  const [costoEnvio, setCostoEnvio] = useState<number>(0)
   const router = useRouter()
 
   const nextIdRef = useRef(1)
@@ -107,7 +109,8 @@ export default function NuevaVentaPage() {
 
   const clienteSeleccionado = clienteId ? clientes.find(c => c.id === clienteId) || null : null
 
-  const total = carrito.reduce((sum, item) => sum + (item.cantidad * item.precio), 0)
+  const totalProductos = carrito.reduce((sum, item) => sum + (item.cantidad * item.precio), 0)
+  const total = totalProductos + (esEnvio ? costoEnvio : 0)
 
   const generarNumeroFactura = useCallback(async () => {
     try {
@@ -223,23 +226,29 @@ export default function NuevaVentaPage() {
     setCarrito(carrito.filter(item => item.id !== id))
   }
 
-  // ✅ CORREGIDO: Mostrar solo la talla seleccionada en el ticket
-  const imprimirTicket = (factura: string, cliente: Cliente | null, carritoItems: ItemCarrito[], totalVal: number, pagoMetodo: string) => {
+  // ✅ Ticket con línea de envío opcional
+  const imprimirTicket = (
+    factura: string,
+    cliente: Cliente | null,
+    carritoItems: ItemCarrito[],
+    totalProductosVal: number,
+    pagoMetodo: string,
+    envioActivo: boolean,
+    envioMonto: number
+  ) => {
     const fecha = new Date().toLocaleString('es-SV')
 
-    const totalReal = carritoItems.reduce((sum, item) => sum + (item.cantidad * item.precio), 0)
+    const totalFinal = totalProductosVal + (envioActivo ? envioMonto : 0)
 
     const duenaNombre = "JJPantalones"
     const duenaTelefono = "7099-7994"
 
-    // ✅ CORREGIDO: Si la talla tiene comas, mostrar solo la seleccionada
     const itemsHtml = carritoItems.map(item => {
-      // Si la talla tiene comas, es porque es múltiple, mostrar solo la seleccionada
       let tallaMostrar = item.talla
       if (tallaMostrar && tallaMostrar.includes(',')) {
         tallaMostrar = tallaMostrar.split(',')[0].trim()
       }
-      
+
       return `
         <div style="margin-bottom: 8px;">
           <div><strong>${item.cantidad}x</strong> ${item.nombre} <span style="color: #003366;">(Talla: ${tallaMostrar})</span></div>
@@ -248,6 +257,10 @@ export default function NuevaVentaPage() {
         </div>
       `
     }).join('')
+
+    const envioHtml = envioActivo && envioMonto > 0 ? `
+      <div class="info-row"><span>ENVÍO:</span><span>$${envioMonto.toFixed(2)}</span></div>
+    ` : ''
 
     const html = `
       <!DOCTYPE html>
@@ -305,7 +318,12 @@ export default function NuevaVentaPage() {
 
           <div class="line"></div>
 
-          <div class="info-row total"><span>TOTAL:</span><span><strong>$${totalReal.toFixed(2)}</strong></span></div>
+          <div class="info-row"><span>SUBTOTAL PRODUCTOS:</span><span>$${totalProductosVal.toFixed(2)}</span></div>
+          ${envioHtml}
+
+          <div class="line"></div>
+
+          <div class="info-row total"><span>TOTAL:</span><span><strong>$${totalFinal.toFixed(2)}</strong></span></div>
 
           <div class="line"></div>
 
@@ -333,10 +351,15 @@ export default function NuevaVentaPage() {
     }
   }
 
-  // ✅ FUNCIÓN FINALIZAR VENTA CORREGIDA - SIN subtotal en el INSERT
+  // ✅ FUNCIÓN FINALIZAR VENTA CON ENVÍO
   const finalizarVenta = async () => {
     if (carrito.length === 0) {
       alert('Agregue productos al carrito')
+      return
+    }
+
+    if (esEnvio && costoEnvio <= 0) {
+      alert('Ingrese un costo de envío válido, o desmarque la casilla de envío')
       return
     }
 
@@ -403,8 +426,10 @@ export default function NuevaVentaPage() {
 
       const factura = await generarNumeroFactura()
       const totalReal = carrito.reduce((sum, item) => sum + (item.cantidad * item.precio), 0)
+      const envioFinal = esEnvio ? costoEnvio : 0
+      const totalConEnvio = totalReal + envioFinal
 
-      // 1. Insertar la venta
+      // 1. Insertar la venta (incluye costo_envio y es_envio)
       const { data: venta, error: errorVenta } = await supabase
         .from('ventas')
         .insert({
@@ -414,7 +439,9 @@ export default function NuevaVentaPage() {
           subtotal: totalReal,
           descuento: 0,
           impuesto: 0,
-          total: totalReal,
+          costo_envio: envioFinal,
+          es_envio: esEnvio,
+          total: totalConEnvio,
           metodo_pago: metodoPago,
           estado: 'completada'
         })
@@ -448,7 +475,7 @@ export default function NuevaVentaPage() {
           .from('ventas')
           .update({ estado: 'incompleta' })
           .eq('id', venta.id)
-        
+
         alert('La venta se registró pero hubo problemas con algunos productos. La venta ha sido marcada como incompleta.')
         return
       }
@@ -472,13 +499,15 @@ export default function NuevaVentaPage() {
       // 4. ✅ Recargar productos para actualizar stock en UI
       await cargarProductos()
 
-      // 5. Imprimir ticket
-      imprimirTicket(factura, clienteInfo, carrito, totalReal, metodoPago)
+      // 5. Imprimir ticket (con envío incluido)
+      imprimirTicket(factura, clienteInfo, carrito, totalReal, metodoPago, esEnvio, envioFinal)
 
       // 6. Limpiar carrito y redirigir
       setTimeout(() => {
         setCarrito([])
         setClienteId('')
+        setEsEnvio(false)
+        setCostoEnvio(0)
         router.push('/dashboard')
       }, 2000)
 
@@ -608,6 +637,37 @@ export default function NuevaVentaPage() {
                   <option value="transferencia">🏦 Transferencia</option>
                 </select>
               </div>
+
+              {/* ✅ Sección de envío */}
+              <div className="mb-4">
+                <label className="flex items-center gap-2 text-sm font-medium mb-2">
+                  <input
+                    type="checkbox"
+                    checked={esEnvio}
+                    onChange={(e) => {
+                      setEsEnvio(e.target.checked)
+                      if (!e.target.checked) setCostoEnvio(0)
+                    }}
+                    className="w-4 h-4"
+                  />
+                  ¿Incluye envío?
+                </label>
+                {esEnvio && (
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Costo del envío ($)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={costoEnvio === 0 ? '' : costoEnvio}
+                      onChange={(e) => setCostoEnvio(parseFloat(e.target.value) || 0)}
+                      className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#003366]"
+                      placeholder="0.00"
+                    />
+                  </div>
+                )}
+              </div>
+
               <div className="border-t pt-3 max-h-75 overflow-y-auto">
                 {carrito.length === 0 ? (
                   <p className="text-gray-400 text-center py-8">Carrito vacío</p>
@@ -644,12 +704,25 @@ export default function NuevaVentaPage() {
                   ))
                 )}
               </div>
+
+              {/* ✅ Desglose con envío */}
               <div className="border-t pt-3 mt-3">
-                <div className="flex justify-between">
+                <div className="flex justify-between text-sm text-gray-600">
+                  <span>Subtotal productos:</span>
+                  <span>${totalProductos.toFixed(2)}</span>
+                </div>
+                {esEnvio && costoEnvio > 0 && (
+                  <div className="flex justify-between text-sm text-gray-600">
+                    <span>Envío:</span>
+                    <span>${costoEnvio.toFixed(2)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between mt-1">
                   <span>TOTAL:</span>
                   <span className="text-[#003366] font-bold text-xl">${total.toFixed(2)}</span>
                 </div>
               </div>
+
               <button
                 onClick={finalizarVenta}
                 disabled={loading || carrito.length === 0}

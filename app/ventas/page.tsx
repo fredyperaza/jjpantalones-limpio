@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
-import { Search, Eye, Printer, FileDown } from 'lucide-react'
+import { Search, Eye, Printer, FileDown, Trash2 } from 'lucide-react'
 
 interface ClienteInfo {
   nombre: string
@@ -30,6 +30,8 @@ interface Venta {
   metodo_pago: string
   estado: string
   id_cliente: string | null
+  costo_envio: number
+  es_envio: boolean
   cliente: ClienteInfo | null
   usuario: UsuarioInfo | null
 }
@@ -71,6 +73,8 @@ interface VentaRaw {
   metodo_pago: string
   estado: string
   id_cliente: string | null
+  costo_envio: number | null
+  es_envio: boolean | null
   cliente: ClienteInfo[]
   usuario: UsuarioInfo[]
 }
@@ -104,6 +108,7 @@ export default function HistorialVentasPage() {
   const [detalles, setDetalles] = useState<DetalleVenta[]>([])
   const [showModal, setShowModal] = useState(false)
   const [autorizado, setAutorizado] = useState(false)
+  const [rol, setRol] = useState<string>('')
   const router = useRouter()
 
   const verificarRol = useCallback(async () => {
@@ -121,6 +126,7 @@ export default function HistorialVentasPage() {
       router.push('/dashboard')
       return false
     }
+    setRol(usuario.rol)
     return true
   }, [router])
 
@@ -166,6 +172,8 @@ export default function HistorialVentasPage() {
           metodo_pago,
           estado,
           id_cliente,
+          costo_envio,
+          es_envio,
           cliente:clientes!ventas_id_cliente_fkey (
             nombre,
             numero_documento,
@@ -197,6 +205,8 @@ export default function HistorialVentasPage() {
         metodo_pago: item.metodo_pago,
         estado: item.estado,
         id_cliente: item.id_cliente,
+        costo_envio: item.costo_envio || 0,
+        es_envio: item.es_envio || false,
         cliente: obtenerClienteData(item.cliente),
         usuario: obtenerUsuarioData(item.usuario)
       }))
@@ -256,6 +266,61 @@ export default function HistorialVentasPage() {
     }
   }
 
+  // ✅ Eliminar venta: restaura el stock de cada producto y borra detalle + venta
+  const eliminarVenta = async (venta: Venta) => {
+    const confirmar = window.confirm(
+      `¿Eliminar la venta ${venta.numero_factura}?\n\nSe devolverá el stock de los productos y esta acción no se puede deshacer.`
+    )
+    if (!confirmar) return
+
+    try {
+      const { data: detallesData, error: errorDetalles } = await supabase
+        .from('detalle_ventas')
+        .select('id_producto, cantidad')
+        .eq('id_venta', venta.id)
+
+      if (errorDetalles) throw errorDetalles
+
+      if (detallesData && detallesData.length > 0) {
+        for (const detalle of detallesData) {
+          const { data: productoActual } = await supabase
+            .from('productos')
+            .select('stock_actual')
+            .eq('id', detalle.id_producto)
+            .single()
+
+          if (productoActual) {
+            await supabase
+              .from('productos')
+              .update({ stock_actual: productoActual.stock_actual + detalle.cantidad })
+              .eq('id', detalle.id_producto)
+          }
+        }
+      }
+
+      const { error: errorDetallesDel } = await supabase
+        .from('detalle_ventas')
+        .delete()
+        .eq('id_venta', venta.id)
+
+      if (errorDetallesDel) throw errorDetallesDel
+
+      const { error: errorVentaDel } = await supabase
+        .from('ventas')
+        .delete()
+        .eq('id', venta.id)
+
+      if (errorVentaDel) throw errorVentaDel
+
+      setVentas(prev => prev.filter(v => v.id !== venta.id))
+      if (showModal) setShowModal(false)
+      alert('Venta eliminada y stock restaurado correctamente.')
+    } catch (error) {
+      console.error('Error al eliminar venta:', error)
+      alert('Ocurrió un error al eliminar la venta. Intente nuevamente.')
+    }
+  }
+
   const reimprimirTicket = async (venta: Venta) => {
     interface DetalleRaw {
       cantidad: number
@@ -295,7 +360,9 @@ export default function HistorialVentasPage() {
     }))
 
     const fechaOriginal = formatearFechaSV(venta.fecha_venta)
-    const total = venta.total || items.reduce((sum, item) => sum + (item.cantidad * item.precio_unitario), 0)
+    const subtotalProductos = items.reduce((sum, item) => sum + (item.cantidad * item.precio_unitario), 0)
+    const envioMonto = venta.es_envio ? (venta.costo_envio || 0) : 0
+    const total = venta.total || (subtotalProductos + envioMonto)
 
     const duenaNombre = "jjpantalones"
     const duenaTelefono = "7099-7994"
@@ -311,7 +378,7 @@ export default function HistorialVentasPage() {
         .select('nombre, numero_documento, tipo_documento, telefono')
         .eq('id', venta.id_cliente)
         .single() as { data: ClienteData | null }
-      
+
       if (clienteData) {
         clienteNombre = clienteData.nombre
         clienteDocumento = clienteData.numero_documento || ''
@@ -331,6 +398,10 @@ export default function HistorialVentasPage() {
         <div style="margin-left: 20px; font-size: 11px;">Subtotal: $${(item.cantidad * item.precio_unitario).toFixed(2)}</div>
       </div>
     `).join('')
+
+    const envioHtml = envioMonto > 0 ? `
+      <div class="info-row"><span>ENVÍO:</span><span>$${envioMonto.toFixed(2)}</span></div>
+    ` : ''
 
     const htmlTicket = `
       <!DOCTYPE html>
@@ -370,34 +441,39 @@ export default function HistorialVentasPage() {
           <div class="subtitle">El Salvador 🇸🇻</div>
           <div class="subtitle">📍 Avenida Independencia Sur, Callejón del Carmen</div>
           <div class="subtitle">📞 ${duenaTelefono} | Contacto: ${duenaNombre}</div>
-          
+
           <div class="line"></div>
-          
+
           <div class="info-row"><span>FACTURA:</span><span><strong>${venta.numero_factura}</strong></span></div>
           <div class="info-row"><span>FECHA:</span><span>${fechaOriginal}</span></div>
           <div class="info-row"><span>CAJA:</span><span>Principal</span></div>
-          
+
           <div class="line"></div>
-          
+
           <div class="info-row"><span>CLIENTE:</span><span><strong>${clienteNombre}</strong></span></div>
           ${clienteDocumento ? `<div class="info-row"><span>DOCUMENTO:</span><span>${clienteTipo}: ${clienteDocumento}</span></div>` : ''}
           ${clienteTelefono ? `<div class="info-row"><span>TELÉFONO:</span><span>${clienteTelefono}</span></div>` : ''}
-          
+
           <div class="line"></div>
-          
+
           <div style="font-weight: bold; margin-bottom: 5px;">PRODUCTOS:</div>
           ${itemsHtml}
-          
+
           <div class="line"></div>
-          
+
+          <div class="info-row"><span>SUBTOTAL PRODUCTOS:</span><span>$${subtotalProductos.toFixed(2)}</span></div>
+          ${envioHtml}
+
+          <div class="line"></div>
+
           <div class="info-row total"><span>TOTAL:</span><span><strong>$${total.toFixed(2)}</strong></span></div>
-          
+
           <div class="line"></div>
-          
+
           <div class="info-row"><span>MÉTODO DE PAGO:</span><span>${venta.metodo_pago === 'efectivo' ? '💵 Efectivo' : venta.metodo_pago === 'tarjeta' ? '💳 Tarjeta' : '🏦 Transferencia'}</span></div>
-          
+
           <div class="line"></div>
-          
+
           <div class="gracias">
             ¡Gracias por su compra!<br/>
             Visítenos nuevamente
@@ -467,6 +543,7 @@ export default function HistorialVentasPage() {
 
     const fechaFormateada = formatearFechaSV(venta.fecha_venta)
     const total = venta.total
+    const envioMonto = venta.es_envio ? (venta.costo_envio || 0) : 0
 
     const script = document.createElement('script')
     script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js'
@@ -545,6 +622,13 @@ export default function HistorialVentasPage() {
       y += 1
       linea(true)
 
+      if (envioMonto > 0) {
+        doc.setFont('helvetica', 'normal')
+        fila('ENVÍO:', `$${envioMonto.toFixed(2)}`, 7)
+        y += 1
+        linea(true)
+      }
+
       doc.setFont('helvetica', 'bold')
       doc.setFontSize(9)
       fila('TOTAL:', `$${total.toFixed(2)}`, 9)
@@ -583,6 +667,8 @@ export default function HistorialVentasPage() {
     v.numero_factura.toLowerCase().includes(search.toLowerCase()) ||
     v.cliente?.nombre?.toLowerCase().includes(search.toLowerCase())
   )
+
+  const puedeEliminar = rol === 'admin' || rol === 'gerente'
 
   if (!autorizado) {
     return (
@@ -675,6 +761,7 @@ export default function HistorialVentasPage() {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Fecha</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Cliente</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Total</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Envío</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Pago</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Estado</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Acciones</th>
@@ -683,11 +770,11 @@ export default function HistorialVentasPage() {
               <tbody className="divide-y divide-gray-200">
                 {loading ? (
                   <tr>
-                    <td colSpan={7} className="px-6 py-8 text-center">Cargando...None</td>
+                    <td colSpan={8} className="px-6 py-8 text-center">Cargando...</td>
                   </tr>
                 ) : ventasFiltradas.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-6 py-8 text-center text-gray-500">No hay ventas registradas</td>
+                    <td colSpan={8} className="px-6 py-8 text-center text-gray-500">No hay ventas registradas</td>
                   </tr>
                 ) : (
                   ventasFiltradas.map((v) => (
@@ -696,6 +783,13 @@ export default function HistorialVentasPage() {
                       <td className="px-6 py-4 text-sm">{formatearFechaSV(v.fecha_venta)}</td>
                       <td className="px-6 py-4">{v.cliente?.nombre || 'Cliente Mostrador'}</td>
                       <td className="px-6 py-4 font-bold text-[#003366]">${v.total.toFixed(2)}</td>
+                      <td className="px-6 py-4 text-sm">
+                        {v.es_envio && v.costo_envio > 0 ? (
+                          <span className="text-blue-700">🚚 ${v.costo_envio.toFixed(2)}</span>
+                        ) : (
+                          <span className="text-gray-400">—</span>
+                        )}
+                      </td>
                       <td className="px-6 py-4">
                         {v.metodo_pago === 'efectivo' ? '💵 Efectivo' :
                          v.metodo_pago === 'tarjeta' ? '💳 Tarjeta' : '🏦 Transferencia'}
@@ -716,6 +810,11 @@ export default function HistorialVentasPage() {
                           <button onClick={() => descargarPDF(v)} className="text-purple-600 hover:text-purple-800" title="Descargar PDF">
                             <FileDown size={18} />
                           </button>
+                          {puedeEliminar && (
+                            <button onClick={() => eliminarVenta(v)} className="text-red-600 hover:text-red-800" title="Eliminar venta">
+                              <Trash2 size={18} />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -743,6 +842,9 @@ export default function HistorialVentasPage() {
                 <div><p className="text-xs text-gray-500">Vendedor</p><p>{selectedVenta.usuario?.nombre_completo || 'Sistema'}</p></div>
                 <div><p className="text-xs text-gray-500">Método de pago</p><p>{selectedVenta.metodo_pago}</p></div>
                 <div><p className="text-xs text-gray-500">Total</p><p className="text-xl font-bold text-[#003366]">${selectedVenta.total.toFixed(2)}</p></div>
+                {selectedVenta.es_envio && selectedVenta.costo_envio > 0 && (
+                  <div><p className="text-xs text-gray-500">Envío</p><p className="text-blue-700 font-semibold">🚚 ${selectedVenta.costo_envio.toFixed(2)}</p></div>
+                )}
               </div>
             </div>
             <h4 className="font-bold mb-3">Productos</h4>
@@ -768,6 +870,12 @@ export default function HistorialVentasPage() {
                       <td className="px-4 py-2 text-right text-sm">${d.subtotal.toFixed(2)}</td>
                     </tr>
                   ))}
+                  {selectedVenta.es_envio && selectedVenta.costo_envio > 0 && (
+                    <tr className="border-b bg-blue-50">
+                      <td className="px-4 py-2 text-sm font-medium" colSpan={3}>🚚 Envío</td>
+                      <td className="px-4 py-2 text-right text-sm font-medium">${selectedVenta.costo_envio.toFixed(2)}</td>
+                    </tr>
+                  )}
                 </tbody>
                 <tfoot className="bg-gray-50">
                   <tr>
@@ -784,6 +892,11 @@ export default function HistorialVentasPage() {
               <button onClick={() => descargarPDF(selectedVenta)} className="flex-1 bg-purple-600 text-white py-2 rounded-lg hover:bg-purple-700 flex items-center justify-center gap-2">
                 <FileDown size={18} /> Descargar PDF
               </button>
+              {puedeEliminar && (
+                <button onClick={() => eliminarVenta(selectedVenta)} className="flex-1 bg-red-600 text-white py-2 rounded-lg hover:bg-red-700 flex items-center justify-center gap-2">
+                  <Trash2 size={18} /> Eliminar
+                </button>
+              )}
               <button onClick={() => setShowModal(false)} className="flex-1 border border-gray-300 py-2 rounded-lg hover:bg-gray-50">
                 Cerrar
               </button>
