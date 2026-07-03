@@ -84,8 +84,6 @@ export default function NuevaVentaPage() {
     }
   }, [router])
 
-  // Incluye codigo_barras y ya NO filtra por stock > 0 aquí,
-  // así se puede ver el producto sin stock (queda deshabilitado en la UI)
   const cargarProductos = useCallback(async () => {
     const { data, error } = await supabase
       .from('productos')
@@ -141,7 +139,6 @@ export default function NuevaVentaPage() {
     iniciar()
   }, [verificarRol, verificarSesion, cargarProductos, cargarClientes])
 
-  // Búsqueda por nombre, talla, color y código de barras
   const productosFiltrados = productos.filter(p => {
     const texto = search.toLowerCase().trim()
     if (!texto) return true
@@ -191,7 +188,6 @@ export default function NuevaVentaPage() {
       return
     }
 
-    // Verificar si el producto tiene múltiples tallas (separadas por coma)
     if (producto.talla && producto.talla.includes(',')) {
       setProductoTemporal(producto)
       const tallas = producto.talla.split(',').map(t => t.trim()).filter(t => t !== '')
@@ -230,9 +226,6 @@ export default function NuevaVentaPage() {
   const imprimirTicket = (factura: string, cliente: Cliente | null, carritoItems: ItemCarrito[], totalVal: number, pagoMetodo: string) => {
     const fecha = new Date().toLocaleString('es-SV')
 
-    // Se recalcula el total directamente desde los productos del ticket,
-    // en vez de confiar en el parámetro totalVal, para evitar que el total
-    // mostrado quede desincronizado de la lista real de productos.
     const totalReal = carritoItems.reduce((sum, item) => sum + (item.cantidad * item.precio), 0)
 
     const duenaNombre = "JJPantalones"
@@ -330,10 +323,24 @@ export default function NuevaVentaPage() {
     }
   }
 
+  // ✅ FUNCIÓN FINALIZAR VENTA COMPLETAMENTE CORREGIDA
   const finalizarVenta = async () => {
     if (carrito.length === 0) {
       alert('Agregue productos al carrito')
       return
+    }
+
+    // ✅ Validar stock antes de continuar
+    for (const item of carrito) {
+      const producto = productos.find(p => p.id === item.productoId)
+      if (!producto) {
+        alert(`El producto ${item.nombre} ya no existe`)
+        return
+      }
+      if (producto.stock_actual < item.cantidad) {
+        alert(`Stock insuficiente para ${item.nombre}. Disponible: ${producto.stock_actual}`)
+        return
+      }
     }
 
     setLoading(true)
@@ -345,24 +352,49 @@ export default function NuevaVentaPage() {
       let clienteFinal = clienteId
       let clienteInfo: Cliente | null = clienteSeleccionado
 
+      // ✅ Manejo mejorado de "Cliente Mostrador"
       if (!clienteFinal) {
-        const { data: mostrador } = await supabase
+        const { data: mostrador, error: mostradorError } = await supabase
           .from('clientes')
           .select('id, nombre, telefono, numero_documento, tipo_documento')
           .eq('nombre', 'Cliente Mostrador')
-          .single()
+          .maybeSingle()  // ✅ Cambiado de .single() a .maybeSingle()
+
+        if (mostradorError) {
+          console.error('Error al buscar Cliente Mostrador:', mostradorError)
+        }
+
         if (mostrador) {
           clienteFinal = mostrador.id
           clienteInfo = mostrador as Cliente
+        } else {
+          // ✅ Crear "Cliente Mostrador" si no existe
+          const { data: nuevoMostrador, error: createError } = await supabase
+            .from('clientes')
+            .insert({
+              nombre: 'Cliente Mostrador',
+              tipo_documento: 'N/A',
+              numero_documento: '00000000-0',
+              telefono: '0000-0000',
+              activo: true
+            })
+            .select()
+            .single()
+
+          if (createError) {
+            console.error('Error al crear Cliente Mostrador:', createError)
+          } else if (nuevoMostrador) {
+            clienteFinal = nuevoMostrador.id
+            clienteInfo = nuevoMostrador as Cliente
+            await cargarClientes()  // ✅ Recargar lista de clientes
+          }
         }
       }
 
       const factura = await generarNumeroFactura()
-
-      // Se recalcula el total directamente desde el carrito actual,
-      // para evitar guardar un total desincronizado de los productos reales.
       const totalReal = carrito.reduce((sum, item) => sum + (item.cantidad * item.precio), 0)
 
+      // 1. Insertar la venta
       const { data: venta, error: errorVenta } = await supabase
         .from('ventas')
         .insert({
@@ -381,25 +413,68 @@ export default function NuevaVentaPage() {
 
       if (errorVenta) throw errorVenta
 
+      // 2. Insertar detalles con subtotal y manejo de errores
+      let erroresDetalle = false
       for (const item of carrito) {
-        await supabase.from('detalle_ventas').insert({
-          id_venta: venta.id,
-          id_producto: item.productoId,
-          cantidad: item.cantidad,
-          precio_unitario: item.precio
-        })
+        const { error: errorDetalle } = await supabase
+          .from('detalle_ventas')
+          .insert({
+            id_venta: venta.id,
+            id_producto: item.productoId,
+            cantidad: item.cantidad,
+            precio_unitario: item.precio,
+            subtotal: item.cantidad * item.precio  // ✅ AGREGADO: subtotal
+          })
+
+        if (errorDetalle) {
+          console.error('Error al insertar detalle:', errorDetalle)
+          erroresDetalle = true
+        }
       }
 
+      // ✅ Si hay errores en detalles, marcar venta como incompleta
+      if (erroresDetalle) {
+        await supabase
+          .from('ventas')
+          .update({ estado: 'incompleta' })
+          .eq('id', venta.id)
+        
+        alert('La venta se registró pero hubo problemas con algunos productos. La venta ha sido marcada como incompleta.')
+        return
+      }
+
+      // 3. ✅ Actualizar el stock de los productos
+      for (const item of carrito) {
+        const producto = productos.find(p => p.id === item.productoId)
+        if (producto) {
+          const nuevoStock = producto.stock_actual - item.cantidad
+          const { error: errorStock } = await supabase
+            .from('productos')
+            .update({ stock_actual: nuevoStock })
+            .eq('id', item.productoId)
+
+          if (errorStock) {
+            console.error(`Error al actualizar stock de ${item.nombre}:`, errorStock)
+          }
+        }
+      }
+
+      // 4. ✅ Recargar productos para actualizar stock en UI
+      await cargarProductos()
+
+      // 5. Imprimir ticket
       imprimirTicket(factura, clienteInfo, carrito, totalReal, metodoPago)
 
+      // 6. Limpiar carrito y redirigir
       setTimeout(() => {
         setCarrito([])
         setClienteId('')
         router.push('/dashboard')
       }, 2000)
+
     } catch (error) {
       console.error('Error:', error)
-      alert('Error al procesar la venta')
+      alert('Error al procesar la venta. Por favor, verifique los datos e intente nuevamente.')
     } finally {
       setLoading(false)
     }
@@ -578,7 +653,6 @@ export default function NuevaVentaPage() {
         </div>
       </div>
 
-      {/* Modal para seleccionar talla */}
       {showTallaModal && productoTemporal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 w-full max-w-md">
@@ -592,9 +666,6 @@ export default function NuevaVentaPage() {
 
             <div className="grid grid-cols-3 gap-3 mb-4">
               {tallasDisponibles.map((talla) => {
-                // El stock_actual es del producto completo (todas las tallas juntas),
-                // no se sabe cuántas unidades son de cada talla específica.
-                // Por eso se permite vender cualquier talla mientras haya stock > 0.
                 const disponible = productoTemporal.stock_actual > 0
 
                 return (
