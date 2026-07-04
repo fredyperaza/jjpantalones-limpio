@@ -407,7 +407,7 @@ export default function NuevaVentaPage() {
               .from('clientes')
               .insert({
                 nombre: 'Cliente Mostrador',
-                tipo_documento: 'N/A',
+                tipo_documento: 'DUI',
                 numero_documento: '00000000-0',
                 telefono: '0000-0000'
               })
