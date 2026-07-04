@@ -385,42 +385,49 @@ export default function NuevaVentaPage() {
       let clienteFinal = clienteId
       let clienteInfo: Cliente | null = clienteSeleccionado
 
-      // ✅ Manejo mejorado de "Cliente Mostrador"
+      // ✅ Manejo mejorado de "Cliente Mostrador" - ya no bloquea la venta si falla
       if (!clienteFinal) {
-        const { data: mostrador, error: mostradorError } = await supabase
-          .from('clientes')
-          .select('id, nombre, telefono, numero_documento, tipo_documento')
-          .eq('nombre', 'Cliente Mostrador')
-          .maybeSingle()
-
-        if (mostradorError) {
-          console.error('Error al buscar Cliente Mostrador:', mostradorError)
-        }
-
-        if (mostrador) {
-          clienteFinal = mostrador.id
-          clienteInfo = mostrador as Cliente
-        } else {
-          // ✅ Crear "Cliente Mostrador" si no existe
-          const { data: nuevoMostrador, error: createError } = await supabase
+        try {
+          const { data: mostrador, error: mostradorError } = await supabase
             .from('clientes')
-            .insert({
-              nombre: 'Cliente Mostrador',
-              tipo_documento: 'N/A',
-              numero_documento: '00000000-0',
-              telefono: '0000-0000',
-              activo: true
-            })
-            .select()
-            .single()
+            .select('id, nombre, telefono, numero_documento, tipo_documento')
+            .eq('nombre', 'Cliente Mostrador')
+            .maybeSingle()
 
-          if (createError) {
-            console.error('Error al crear Cliente Mostrador:', createError)
-          } else if (nuevoMostrador) {
-            clienteFinal = nuevoMostrador.id
-            clienteInfo = nuevoMostrador as Cliente
-            await cargarClientes()
+          if (mostradorError) {
+            console.error('Error al buscar Cliente Mostrador:', mostradorError)
           }
+
+          if (mostrador) {
+            clienteFinal = mostrador.id
+            clienteInfo = mostrador as Cliente
+          } else {
+            // ✅ Crear "Cliente Mostrador" si no existe
+            const { data: nuevoMostrador, error: createError } = await supabase
+              .from('clientes')
+              .insert({
+                nombre: 'Cliente Mostrador',
+                tipo_documento: 'N/A',
+                numero_documento: '00000000-0',
+                telefono: '0000-0000'
+              })
+              .select()
+              .single()
+
+            if (createError) {
+              console.error('Error al crear Cliente Mostrador:', createError)
+            } else if (nuevoMostrador) {
+              clienteFinal = nuevoMostrador.id
+              clienteInfo = nuevoMostrador as Cliente
+              await cargarClientes()
+            }
+          }
+        } catch (errorClienteMostrador) {
+          // ✅ Si algo falla aquí (columna faltante, RLS, etc.), no detenemos la venta.
+          // Se registra sin cliente asociado en vez de perder toda la venta.
+          console.error('No se pudo resolver Cliente Mostrador, se continúa sin cliente:', errorClienteMostrador)
+          clienteFinal = ''
+          clienteInfo = null
         }
       }
 
