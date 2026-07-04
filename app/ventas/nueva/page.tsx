@@ -476,14 +476,15 @@ export default function NuevaVentaPage() {
         }
       }
 
-      // ✅ Si hay errores en detalles, marcar venta como incompleta
+      // ✅ Si hay errores en detalles, marcar venta como pendiente para revisión
+      // ('incompleta' no es un valor válido del constraint ventas_estado_check)
       if (erroresDetalle) {
         await supabase
           .from('ventas')
-          .update({ estado: 'incompleta' })
+          .update({ estado: 'pendiente' })
           .eq('id', venta.id)
 
-        alert('La venta se registró pero hubo problemas con algunos productos. La venta ha sido marcada como incompleta.')
+        alert('La venta se registró pero hubo problemas con algunos productos. La venta ha quedado como pendiente para revisión.')
         return
       }
 
