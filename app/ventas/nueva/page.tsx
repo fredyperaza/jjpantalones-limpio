@@ -432,82 +432,35 @@ export default function NuevaVentaPage() {
       }
 
       const factura = await generarNumeroFactura()
-      const totalReal = carrito.reduce((sum, item) => sum + (item.cantidad * item.precio), 0)
       const envioFinal = esEnvio ? costoEnvio : 0
-      const totalConEnvio = totalReal + envioFinal
 
-      // 1. Insertar la venta (incluye costo_envio y es_envio)
-      const { data: venta, error: errorVenta } = await supabase
-        .from('ventas')
-        .insert({
-          numero_factura: factura,
-          id_cliente: clienteFinal || null,
-          id_usuario: user.id,
-          subtotal: totalReal,
-          descuento: 0,
-          impuesto: 0,
-          costo_envio: envioFinal,
-          es_envio: esEnvio,
-          total: totalConEnvio,
-          metodo_pago: metodoPago,
-          estado: 'completada'
-        })
-        .select()
-        .single()
+      const itemsParaVenta = carrito.map(item => ({
+        id_producto: item.productoId,
+        cantidad: item.cantidad,
+        precio_unitario: item.precio
+      }))
 
-      if (errorVenta) throw errorVenta
+      // ✅ Registro atómico: venta + detalles + descuento de stock en una sola
+      // transacción real en la base de datos. Si algo falla (stock insuficiente,
+      // producto inexistente, etc.), NADA queda a medias.
+      const { error: errorRpc } = await supabase.rpc('registrar_venta_completa', {
+        p_numero_factura: factura,
+        p_id_cliente: clienteFinal || null,
+        p_id_usuario: user.id,
+        p_metodo_pago: metodoPago,
+        p_costo_envio: envioFinal,
+        p_es_envio: esEnvio,
+        p_items: itemsParaVenta
+      })
 
-      // 2. Insertar detalles SIN subtotal (es columna generada en la BD)
-      let erroresDetalle = false
-      for (const item of carrito) {
-        const { error: errorDetalle } = await supabase
-          .from('detalle_ventas')
-          .insert({
-            id_venta: venta.id,
-            id_producto: item.productoId,
-            cantidad: item.cantidad,
-            precio_unitario: item.precio
-            // ✅ subtotal NO se incluye - la BD lo calcula automáticamente
-          })
+      if (errorRpc) throw errorRpc
 
-        if (errorDetalle) {
-          console.error('Error al insertar detalle:', errorDetalle)
-          erroresDetalle = true
-        }
-      }
+      const totalReal = carrito.reduce((sum, item) => sum + (item.cantidad * item.precio), 0)
 
-      // ✅ Si hay errores en detalles, marcar venta como pendiente para revisión
-      // ('incompleta' no es un valor válido del constraint ventas_estado_check)
-      if (erroresDetalle) {
-        await supabase
-          .from('ventas')
-          .update({ estado: 'pendiente' })
-          .eq('id', venta.id)
-
-        alert('La venta se registró pero hubo problemas con algunos productos. La venta ha quedado como pendiente para revisión.')
-        return
-      }
-
-      // 3. ✅ Actualizar el stock de los productos (solo si el trigger no existe o como respaldo)
-      for (const item of carrito) {
-        const producto = productos.find(p => p.id === item.productoId)
-        if (producto) {
-          const nuevoStock = producto.stock_actual - item.cantidad
-          const { error: errorStock } = await supabase
-            .from('productos')
-            .update({ stock_actual: nuevoStock })
-            .eq('id', item.productoId)
-
-          if (errorStock) {
-            console.error(`Error al actualizar stock de ${item.nombre}:`, errorStock)
-          }
-        }
-      }
-
-      // 4. ✅ Recargar productos para actualizar stock en UI
+      // ✅ Recargar productos para reflejar el nuevo stock en la UI
       await cargarProductos()
 
-      // 5. Imprimir ticket (con envío incluido)
+      // Imprimir ticket (con envío incluido)
       imprimirTicket(factura, clienteInfo, carrito, totalReal, metodoPago, esEnvio, envioFinal)
 
       // 6. Limpiar carrito y redirigir
@@ -521,7 +474,8 @@ export default function NuevaVentaPage() {
 
     } catch (error) {
       console.error('Error:', error)
-      alert('Error al procesar la venta. Por favor, verifique los datos e intente nuevamente.')
+      const mensaje = error instanceof Error ? error.message : 'Error desconocido'
+      alert(`Error al procesar la venta: ${mensaje}`)
     } finally {
       setLoading(false)
     }

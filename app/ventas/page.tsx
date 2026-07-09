@@ -266,7 +266,9 @@ export default function HistorialVentasPage() {
     }
   }
 
-  // ✅ Eliminar venta: restaura el stock de cada producto y borra detalle + venta
+  // ✅ Eliminar venta: la función en Supabase restaura el stock y borra
+  // detalle + venta en una sola transacción atómica. Si algo falla,
+  // nada queda a medias.
   const eliminarVenta = async (venta: Venta) => {
     const confirmar = window.confirm(
       `¿Eliminar la venta ${venta.numero_factura}?\n\nSe devolverá el stock de los productos y esta acción no se puede deshacer.`
@@ -274,50 +276,19 @@ export default function HistorialVentasPage() {
     if (!confirmar) return
 
     try {
-      const { data: detallesData, error: errorDetalles } = await supabase
-        .from('detalle_ventas')
-        .select('id_producto, cantidad')
-        .eq('id_venta', venta.id)
+      const { error } = await supabase.rpc('eliminar_venta_completa', {
+        p_id_venta: venta.id
+      })
 
-      if (errorDetalles) throw errorDetalles
-
-      if (detallesData && detallesData.length > 0) {
-        for (const detalle of detallesData) {
-          const { data: productoActual } = await supabase
-            .from('productos')
-            .select('stock_actual')
-            .eq('id', detalle.id_producto)
-            .single()
-
-          if (productoActual) {
-            await supabase
-              .from('productos')
-              .update({ stock_actual: productoActual.stock_actual + detalle.cantidad })
-              .eq('id', detalle.id_producto)
-          }
-        }
-      }
-
-      const { error: errorDetallesDel } = await supabase
-        .from('detalle_ventas')
-        .delete()
-        .eq('id_venta', venta.id)
-
-      if (errorDetallesDel) throw errorDetallesDel
-
-      const { error: errorVentaDel } = await supabase
-        .from('ventas')
-        .delete()
-        .eq('id', venta.id)
-
-      if (errorVentaDel) throw errorVentaDel
+      if (error) throw error
 
       setVentas(prev => prev.filter(v => v.id !== venta.id))
       if (showModal) setShowModal(false)
       alert('Venta eliminada y stock restaurado correctamente.')
     } catch (error) {
       console.error('Error al eliminar venta:', error)
-      alert('Ocurrió un error al eliminar la venta. Intente nuevamente.')
+      const mensaje = error instanceof Error ? error.message : 'Error desconocido'
+      alert(`No se pudo eliminar la venta: ${mensaje}`)
     }
   }
 
