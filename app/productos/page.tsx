@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
-import { Plus, Edit, Trash2, Search, RefreshCw } from 'lucide-react'
+import { Plus, Edit, Trash2, Search, RefreshCw, RotateCcw } from 'lucide-react'
 
 interface Producto {
   id: string
@@ -17,6 +17,7 @@ interface Producto {
   precio_venta: number
   stock_actual: number
   stock_minimo: number
+  activo: boolean
 }
 
 interface FormData {
@@ -32,27 +33,30 @@ interface FormData {
   stock_minimo: number
 }
 
+const formVacio: FormData = {
+  nombre: '',
+  talla: '',
+  color: '',
+  genero: 'unisex',
+  marca: '',
+  codigo_barras: '',
+  precio_costo: 0,
+  precio_venta: 0,
+  stock_actual: 0,
+  stock_minimo: 5
+}
+
 export default function ProductosPage() {
   const [productos, setProductos] = useState<Producto[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const [mostrarInactivos, setMostrarInactivos] = useState(false)
   const [showModal, setShowModal] = useState(false)
   const [editing, setEditing] = useState<Producto | null>(null)
   const [autorizado, setAutorizado] = useState(false)
   const router = useRouter()
 
-  const [form, setForm] = useState<FormData>({
-    nombre: '',
-    talla: '',
-    color: '',
-    genero: 'unisex',
-    marca: '',
-    codigo_barras: '',
-    precio_costo: 0,
-    precio_venta: 0,
-    stock_actual: 0,
-    stock_minimo: 5
-  })
+  const [form, setForm] = useState<FormData>(formVacio)
 
   const verificarRol = useCallback(async () => {
     const { data: { session } } = await supabase.auth.getSession()
@@ -82,33 +86,21 @@ export default function ProductosPage() {
     }
   }, [router])
 
+  // ✅ Se quitaron todos los console.log de depuración que estaban aquí
   const cargarProductos = useCallback(async () => {
     setLoading(true)
     try {
-      console.log('1. Iniciando carga de productos...')
-      
-      const { data, error, status } = await supabase
+      const { data, error } = await supabase
         .from('productos')
         .select('*')
         .order('nombre')
 
-      console.log('2. Status de la respuesta:', status)
-      console.log('3. Error:', error)
-      console.log('4. Data recibida:', data)
-      console.log('5. Cantidad de productos:', data?.length)
-
-      if (error) {
-        console.error('Error de Supabase:', error)
-        throw error
-      }
-      
+      if (error) throw error
       setProductos(data || [])
-      console.log('6. Productos guardados en el estado:', data?.length)
     } catch (error) {
-      console.error('Error en cargarProductos:', error)
+      console.error('Error al cargar productos:', error)
     } finally {
       setLoading(false)
-      console.log('7. Loading finalizado')
     }
   }, [])
 
@@ -116,7 +108,7 @@ export default function ProductosPage() {
     const iniciar = async () => {
       const tieneAcceso = await verificarRol()
       if (!tieneAcceso) return
-      
+
       await verificarSesion()
       await cargarProductos()
       setAutorizado(true)
@@ -139,8 +131,9 @@ export default function ProductosPage() {
         precio_costo: form.precio_costo,
         precio_venta: form.precio_venta,
         stock_actual: form.stock_actual,
-        stock_minimo: form.stock_minimo,
-        activo: true
+        stock_minimo: form.stock_minimo
+        // ✅ 'activo' ya no se fuerza a true aquí; al editar un producto
+        // desactivado, esto ya no lo reactivaba sin que el usuario lo pidiera.
       }
 
       if (editing) {
@@ -152,24 +145,13 @@ export default function ProductosPage() {
       } else {
         const { error } = await supabase
           .from('productos')
-          .insert([datosProducto])
+          .insert([{ ...datosProducto, activo: true }])
         if (error) throw error
       }
 
       setShowModal(false)
       setEditing(null)
-      setForm({
-        nombre: '',
-        talla: '',
-        color: '',
-        genero: 'unisex',
-        marca: '',
-        codigo_barras: '',
-        precio_costo: 0,
-        precio_venta: 0,
-        stock_actual: 0,
-        stock_minimo: 5
-      })
+      setForm(formVacio)
       await cargarProductos()
     } catch (err) {
       const error = err as Error
@@ -179,14 +161,54 @@ export default function ProductosPage() {
     }
   }
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('¿Eliminar este producto?')) return
+  // ✅ Antes: borrado físico (delete) sin revisar error, lo que rompía el
+  // historial de ventas antiguas (el producto vendido dejaba de existir)
+  // y podía fallar en silencio si había ventas asociadas.
+  // Ahora: desactivación (soft delete) - el producto deja de aparecer
+  // en Nueva Venta, pero el historial sigue mostrando su nombre correctamente.
+  const handleDesactivar = async (producto: Producto) => {
+    if (!confirm(`¿Desactivar "${producto.nombre}"? Ya no aparecerá disponible para vender, pero se conserva en el historial.`)) return
+
     try {
-      await supabase.from('productos').delete().eq('id', id)
+      const { data, error } = await supabase
+        .from('productos')
+        .update({ activo: false })
+        .eq('id', producto.id)
+        .select()
+
+      if (error) throw error
+
+      if (!data || data.length === 0) {
+        alert('No se pudo desactivar el producto: la base de datos no permitió el cambio (posiblemente por permisos).')
+        return
+      }
+
       await cargarProductos()
     } catch (err) {
       const error = err as Error
-      console.error('Error:', error.message)
+      alert(error.message || 'Error al desactivar el producto')
+    }
+  }
+
+  const handleReactivar = async (producto: Producto) => {
+    try {
+      const { data, error } = await supabase
+        .from('productos')
+        .update({ activo: true })
+        .eq('id', producto.id)
+        .select()
+
+      if (error) throw error
+
+      if (!data || data.length === 0) {
+        alert('No se pudo reactivar el producto: la base de datos no permitió el cambio.')
+        return
+      }
+
+      await cargarProductos()
+    } catch (err) {
+      const error = err as Error
+      alert(error.message || 'Error al reactivar el producto')
     }
   }
 
@@ -212,11 +234,13 @@ export default function ProductosPage() {
     router.push('/login')
   }
 
-  const productosFiltrados = productos.filter(p =>
-    p.nombre.toLowerCase().includes(search.toLowerCase()) ||
-    p.marca?.toLowerCase().includes(search.toLowerCase()) ||
-    p.codigo_barras?.toLowerCase().includes(search.toLowerCase())
-  )
+  const productosFiltrados = productos
+    .filter(p => mostrarInactivos ? true : p.activo)
+    .filter(p =>
+      p.nombre.toLowerCase().includes(search.toLowerCase()) ||
+      p.marca?.toLowerCase().includes(search.toLowerCase()) ||
+      p.codigo_barras?.toLowerCase().includes(search.toLowerCase())
+    )
 
   if (!autorizado) {
     return (
@@ -263,18 +287,7 @@ export default function ProductosPage() {
             <button
               onClick={() => {
                 setEditing(null)
-                setForm({
-                  nombre: '',
-                  talla: '',
-                  color: '',
-                  genero: 'unisex',
-                  marca: '',
-                  codigo_barras: '',
-                  precio_costo: 0,
-                  precio_venta: 0,
-                  stock_actual: 0,
-                  stock_minimo: 5
-                })
+                setForm(formVacio)
                 setShowModal(true)
               }}
               className="bg-[#003366] text-white px-4 py-2 rounded-lg hover:bg-[#002244] transition flex items-center gap-2"
@@ -284,15 +297,26 @@ export default function ProductosPage() {
           </div>
         </div>
 
-        <div className="mb-6 relative">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
-          <input
-            type="text"
-            placeholder="Buscar por nombre, marca o código de barras..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#003366]"
-          />
+        <div className="mb-6 flex flex-col md:flex-row gap-3">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
+            <input
+              type="text"
+              placeholder="Buscar por nombre, marca o código de barras..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full pl-10 pr-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#003366]"
+            />
+          </div>
+          <label className="flex items-center gap-2 text-sm text-gray-600 whitespace-nowrap">
+            <input
+              type="checkbox"
+              checked={mostrarInactivos}
+              onChange={(e) => setMostrarInactivos(e.target.checked)}
+              className="w-4 h-4"
+            />
+            Mostrar desactivados
+          </label>
         </div>
 
         <div className="bg-white rounded-lg shadow overflow-hidden">
@@ -305,13 +329,14 @@ export default function ProductosPage() {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Talla/Color</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Stock</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Precio</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Estado</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Acciones</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
                 {loading ? (
                   <tr>
-                    <td colSpan={6} className="px-6 py-8 text-center">
+                    <td colSpan={7} className="px-6 py-8 text-center">
                       <div className="flex justify-center">
                         <div className="w-6 h-6 border-2 border-[#003366] border-t-transparent rounded-full animate-spin"></div>
                       </div>
@@ -320,13 +345,13 @@ export default function ProductosPage() {
                   </tr>
                 ) : productosFiltrados.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-6 py-8 text-center text-gray-500">
+                    <td colSpan={7} className="px-6 py-8 text-center text-gray-500">
                       {search ? 'No se encontraron productos' : 'No hay productos registrados'}
                     </td>
                   </tr>
                 ) : (
                   productosFiltrados.map((p) => (
-                    <tr key={p.id} className="hover:bg-gray-50">
+                    <tr key={p.id} className={`hover:bg-gray-50 ${!p.activo ? 'opacity-50' : ''}`}>
                       <td className="px-6 py-4">
                         <div>
                           <p className="font-medium">{p.nombre}</p>
@@ -344,13 +369,26 @@ export default function ProductosPage() {
                       </td>
                       <td className="px-6 py-4">${p.precio_venta}</td>
                       <td className="px-6 py-4">
+                        {p.activo ? (
+                          <span className="px-2 py-1 bg-green-100 text-green-800 text-xs rounded-full">Activo</span>
+                        ) : (
+                          <span className="px-2 py-1 bg-gray-200 text-gray-600 text-xs rounded-full">Desactivado</span>
+                        )}
+                      </td>
+                      <td className="px-6 py-4">
                         <div className="flex gap-2">
-                          <button onClick={() => handleEdit(p)} className="text-blue-600 hover:text-blue-800">
+                          <button onClick={() => handleEdit(p)} className="text-blue-600 hover:text-blue-800" title="Editar">
                             <Edit size={18} />
                           </button>
-                          <button onClick={() => handleDelete(p.id)} className="text-red-600 hover:text-red-800">
-                            <Trash2 size={18} />
-                          </button>
+                          {p.activo ? (
+                            <button onClick={() => handleDesactivar(p)} className="text-red-600 hover:text-red-800" title="Desactivar">
+                              <Trash2 size={18} />
+                            </button>
+                          ) : (
+                            <button onClick={() => handleReactivar(p)} className="text-green-600 hover:text-green-800" title="Reactivar">
+                              <RotateCcw size={18} />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -368,27 +406,14 @@ export default function ProductosPage() {
         )}
       </main>
 
-      {/* Modal para agregar/editar CON BOTÓN X */}
       {showModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto relative">
-            {/* Botón de cerrar (X) */}
             <button
               onClick={() => {
                 setShowModal(false)
                 setEditing(null)
-                setForm({
-                  nombre: '',
-                  talla: '',
-                  color: '',
-                  genero: 'unisex',
-                  marca: '',
-                  codigo_barras: '',
-                  precio_costo: 0,
-                  precio_venta: 0,
-                  stock_actual: 0,
-                  stock_minimo: 5
-                })
+                setForm(formVacio)
               }}
               className="absolute top-3 right-3 text-gray-400 hover:text-gray-600 transition text-2xl w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100"
               title="Cerrar"
@@ -470,7 +495,7 @@ export default function ProductosPage() {
                     type="number"
                     step="0.01"
                     value={form.precio_costo}
-                    onChange={(e) => setForm({ ...form, precio_costo: parseFloat(e.target.value) })}
+                    onChange={(e) => setForm({ ...form, precio_costo: parseFloat(e.target.value) || 0 })}
                     className="w-full px-3 py-2 border rounded-lg"
                   />
                 </div>
@@ -483,7 +508,7 @@ export default function ProductosPage() {
                     step="0.01"
                     required
                     value={form.precio_venta}
-                    onChange={(e) => setForm({ ...form, precio_venta: parseFloat(e.target.value) })}
+                    onChange={(e) => setForm({ ...form, precio_venta: parseFloat(e.target.value) || 0 })}
                     className="w-full px-3 py-2 border rounded-lg"
                   />
                 </div>
@@ -492,7 +517,7 @@ export default function ProductosPage() {
                   <input
                     type="number"
                     value={form.stock_actual}
-                    onChange={(e) => setForm({ ...form, stock_actual: parseInt(e.target.value) })}
+                    onChange={(e) => setForm({ ...form, stock_actual: parseInt(e.target.value) || 0 })}
                     className="w-full px-3 py-2 border rounded-lg"
                   />
                 </div>
@@ -503,7 +528,7 @@ export default function ProductosPage() {
                   <input
                     type="number"
                     value={form.stock_minimo}
-                    onChange={(e) => setForm({ ...form, stock_minimo: parseInt(e.target.value) })}
+                    onChange={(e) => setForm({ ...form, stock_minimo: parseInt(e.target.value) || 0 })}
                     className="w-full px-3 py-2 border rounded-lg"
                     placeholder="Alerta cuando baje de aquí"
                   />

@@ -32,6 +32,10 @@ interface VentaData {
 interface DetalleData {
   cantidad: number
   precio_unitario: number
+  // ✅ 'foto' del costo al momento de la venta (puede venir null en ventas
+  // registradas antes de este cambio; en ese caso usamos el costo actual
+  // del producto como respaldo)
+  precio_costo_venta: number | null
   producto: { nombre: string; precio_costo: number } | null
 }
 
@@ -125,26 +129,36 @@ export default function ReportesPage() {
       const totalIngresos = ventasData?.reduce((sum, v) => sum + (v.total || 0), 0) || 0
       const ticketPromedio = totalVentas > 0 ? totalIngresos / totalVentas : 0
 
-      // Traemos también precio_costo del producto para poder calcular
-      // la ganancia real (precio_venta_real - precio_costo) por cada línea vendida
+      // ✅ CORREGIDO: antes esta consulta no filtraba por estado de la venta,
+      // así que ventas 'pendientes' o 'anuladas' sí se contaban aquí pero
+      // NO en el resumen de arriba, dando números inconsistentes entre sí.
+      // Ahora se filtra por venta.estado = 'completada' igual que el resumen,
+      // usando la fecha real de la venta (venta.fecha_venta) en vez de
+      // detalle_ventas.created_at para que el periodo coincida exactamente.
       const { data: detalles } = await supabase
         .from('detalle_ventas')
         .select(`
           cantidad,
           precio_unitario,
-          producto:productos (nombre, precio_costo)
+          precio_costo_venta,
+          producto:productos (nombre, precio_costo),
+          venta:ventas!inner (estado, fecha_venta)
         `)
-        .gte('created_at', fechaInicioStr)
+        .eq('venta.estado', 'completada')
+        .gte('venta.fecha_venta', fechaInicioStr)
 
-      const detallesData = detalles as DetalleData[] | null
+      const detallesData = detalles as unknown as DetalleData[] | null
       const productosMap = new Map<string, { cantidad: number, ingresos: number }>()
       let totalGananciaReal = 0
 
       detallesData?.forEach((d) => {
         const nombre = d.producto?.nombre || 'Producto no disponible'
-        const costo = d.producto?.precio_costo ?? 0
 
-        // Ganancia de esta línea: (precio al que se vendió - costo) * cantidad
+        // ✅ Usa el costo histórico guardado al momento de la venta.
+        // Si la venta es anterior a este cambio (precio_costo_venta es null),
+        // usa el costo actual del producto como respaldo, igual que antes.
+        const costo = d.precio_costo_venta ?? d.producto?.precio_costo ?? 0
+
         const gananciaLinea = (d.precio_unitario - costo) * d.cantidad
         totalGananciaReal += gananciaLinea
 
@@ -189,6 +203,9 @@ export default function ReportesPage() {
       const clientesMap = new Map<string, { compras: number, gastado: number }>()
 
       clientesDataArray?.forEach((v) => {
+        // Nota: esta consulta ya excluye ventas con id_cliente nulo (ver
+        // .not('id_cliente', 'is', null) arriba), así que en la práctica
+        // v.cliente siempre debería resolver aquí.
         const nombre = v.cliente?.nombre || 'Cliente Mostrador'
         const existe = clientesMap.get(nombre)
         if (existe) {

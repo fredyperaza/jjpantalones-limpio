@@ -32,6 +32,8 @@ export default function ClientesPage() {
   const [search, setSearch] = useState('')
   const [showModal, setShowModal] = useState(false)
   const [editing, setEditing] = useState<Cliente | null>(null)
+  const [autorizado, setAutorizado] = useState(false)
+  const [rol, setRol] = useState<string>('')
   const router = useRouter()
 
   const [form, setForm] = useState<FormData>({
@@ -44,14 +46,34 @@ export default function ClientesPage() {
     es_mayorista: false
   })
 
-  const verificarSesion = useCallback(async () => {
-    const { data } = await supabase.auth.getSession()
-    if (!data.session) {
+  // ✅ Antes solo se verificaba sesión, no rol. Cualquier usuario logueado
+  // podía crear/editar/eliminar clientes. Ahora se restringe igual que
+  // Productos y Reportes: admin o gerente pueden gestionar clientes,
+  // vendedor solo puede ver (ver renderizado condicional más abajo).
+  const verificarRol = useCallback(async () => {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) {
       router.push('/login')
+      return false
     }
+
+    const { data: usuario } = await supabase
+      .from('usuarios')
+      .select('rol')
+      .eq('id', session.user.id)
+      .single()
+
+    if (!usuario || (usuario.rol !== 'admin' && usuario.rol !== 'gerente' && usuario.rol !== 'vendedor')) {
+      router.push('/dashboard')
+      return false
+    }
+
+    setRol(usuario.rol)
+    return true
   }, [router])
 
   const cargarClientes = useCallback(async () => {
+    setLoading(true)
     try {
       const { data, error } = await supabase
         .from('clientes')
@@ -69,14 +91,24 @@ export default function ClientesPage() {
 
   useEffect(() => {
     const iniciar = async () => {
-      await verificarSesion()
+      const tieneAcceso = await verificarRol()
+      if (!tieneAcceso) return
       await cargarClientes()
+      setAutorizado(true)
     }
     iniciar()
-  }, [verificarSesion, cargarClientes])
+  }, [verificarRol, cargarClientes])
+
+  const puedeGestionar = rol === 'admin' || rol === 'gerente'
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+
+    if (!puedeGestionar) {
+      alert('No tienes permisos para esta acción')
+      return
+    }
+
     setLoading(true)
 
     try {
@@ -92,6 +124,14 @@ export default function ClientesPage() {
       }
 
       if (editing) {
+        // ✅ Protección: no permitir renombrar "Cliente Mostrador" a otra cosa,
+        // ni desactivar su condición, ya que Nueva Venta depende de ese nombre exacto.
+        if (editing.nombre === 'Cliente Mostrador' && payload.nombre !== 'Cliente Mostrador') {
+          alert('No se puede cambiar el nombre de "Cliente Mostrador": el sistema de ventas depende de él.')
+          setLoading(false)
+          return
+        }
+
         const { error } = await supabase
           .from('clientes')
           .update(payload)
@@ -128,15 +168,43 @@ export default function ClientesPage() {
     }
   }
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('¿Eliminar este cliente? Se eliminarán también sus ventas.')) return
+  const handleDelete = async (cliente: Cliente) => {
+    if (!puedeGestionar) {
+      alert('No tienes permisos para esta acción')
+      return
+    }
+
+    // ✅ Protección: "Cliente Mostrador" es el cliente por defecto que usa
+    // Nueva Venta cuando no se selecciona ninguno. Borrarlo rompería ese flujo.
+    if (cliente.nombre === 'Cliente Mostrador') {
+      alert('No se puede eliminar "Cliente Mostrador": es el cliente por defecto que usa el sistema de ventas.')
+      return
+    }
+
+    // ✅ Mensaje corregido: la relación ventas → cliente es "ON DELETE SET NULL",
+    // no CASCADE. Las ventas de este cliente NO se borran, solo quedan sin
+    // cliente asociado (aparecerán como "Cliente eliminado" en el historial).
+    const confirmar = confirm(
+      '¿Eliminar este cliente?\n\nSus ventas anteriores NO se eliminarán, pero quedarán sin cliente asociado en el historial.'
+    )
+    if (!confirmar) return
 
     try {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('clientes')
         .delete()
-        .eq('id', id)
+        .eq('id', cliente.id)
+        .select()
+
       if (error) throw error
+
+      // ✅ Igual que en ventas: si RLS bloquea el borrado sin dar error,
+      // .select() nos deja detectarlo en vez de fingir que se borró.
+      if (!data || data.length === 0) {
+        alert('No se pudo eliminar el cliente: la base de datos no permitió el borrado (posiblemente por permisos).')
+        return
+      }
+
       await cargarClientes()
     } catch (err) {
       const error = err as Error
@@ -169,6 +237,17 @@ export default function ClientesPage() {
     c.email?.toLowerCase().includes(search.toLowerCase())
   )
 
+  if (!autorizado) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-100">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-[#003366] border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-500">Verificando permisos...</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-gray-100">
       <header className="bg-[#003366] shadow-lg sticky top-0 z-10">
@@ -199,24 +278,26 @@ export default function ClientesPage() {
       <main className="max-w-7xl mx-auto px-4 py-8">
         <div className="flex justify-between items-center mb-6">
           <h2 className="text-2xl font-bold text-[#003366]">👥 Clientes</h2>
-          <button
-            onClick={() => {
-              setEditing(null)
-              setForm({
-                nombre: '',
-                tipo_documento: 'DUI',
-                numero_documento: '',
-                email: '',
-                telefono: '',
-                direccion: '',
-                es_mayorista: false
-              })
-              setShowModal(true)
-            }}
-            className="bg-[#003366] text-white px-4 py-2 rounded-lg hover:bg-[#002244] transition flex items-center gap-2"
-          >
-            <Plus size={18} /> Nuevo Cliente
-          </button>
+          {puedeGestionar && (
+            <button
+              onClick={() => {
+                setEditing(null)
+                setForm({
+                  nombre: '',
+                  tipo_documento: 'DUI',
+                  numero_documento: '',
+                  email: '',
+                  telefono: '',
+                  direccion: '',
+                  es_mayorista: false
+                })
+                setShowModal(true)
+              }}
+              className="bg-[#003366] text-white px-4 py-2 rounded-lg hover:bg-[#002244] transition flex items-center gap-2"
+            >
+              <Plus size={18} /> Nuevo Cliente
+            </button>
+          )}
         </div>
 
         <div className="mb-6 relative">
@@ -239,7 +320,9 @@ export default function ClientesPage() {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Documento</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Contacto</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Tipo</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Acciones</th>
+                  {puedeGestionar && (
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Acciones</th>
+                  )}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
@@ -256,7 +339,12 @@ export default function ClientesPage() {
                     <tr key={c.id} className="hover:bg-gray-50">
                       <td className="px-6 py-4">
                         <div>
-                          <p className="font-medium">{c.nombre}</p>
+                          <p className="font-medium">
+                            {c.nombre}
+                            {c.nombre === 'Cliente Mostrador' && (
+                              <span className="ml-2 text-xs text-gray-400">(protegido)</span>
+                            )}
+                          </p>
                           <p className="text-xs text-gray-500">{c.direccion}</p>
                         </div>
                        </td>
@@ -274,16 +362,20 @@ export default function ClientesPage() {
                           <span className="px-2 py-1 bg-gray-100 text-gray-600 text-xs rounded-full">Mostrador</span>
                         )}
                        </td>
-                      <td className="px-6 py-4">
-                        <div className="flex gap-2">
-                          <button onClick={() => handleEdit(c)} className="text-blue-600 hover:text-blue-800">
-                            <Edit size={18} />
-                          </button>
-                          <button onClick={() => handleDelete(c.id)} className="text-red-600 hover:text-red-800">
-                            <Trash2 size={18} />
-                          </button>
-                        </div>
-                       </td>
+                      {puedeGestionar && (
+                        <td className="px-6 py-4">
+                          <div className="flex gap-2">
+                            <button onClick={() => handleEdit(c)} className="text-blue-600 hover:text-blue-800">
+                              <Edit size={18} />
+                            </button>
+                            {c.nombre !== 'Cliente Mostrador' && (
+                              <button onClick={() => handleDelete(c)} className="text-red-600 hover:text-red-800">
+                                <Trash2 size={18} />
+                              </button>
+                            )}
+                          </div>
+                         </td>
+                      )}
                     </tr>
                   ))
                 )}
@@ -297,7 +389,7 @@ export default function ClientesPage() {
         </p>
       </main>
 
-      {showModal && (
+      {showModal && puedeGestionar && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
             <h3 className="text-xl font-bold mb-4">{editing ? 'Editar' : 'Nuevo'} Cliente</h3>

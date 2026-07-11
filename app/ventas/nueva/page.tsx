@@ -1,56 +1,115 @@
 'use client'
 
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
-import { Search, ShoppingCart, Printer, Plus, Minus, Trash2 } from 'lucide-react'
+import { Search, Eye, Printer, FileDown, Trash2 } from 'lucide-react'
 
-interface Producto {
-  id: string
+interface ClienteInfo {
   nombre: string
-  talla: string
-  color: string
-  precio_venta: number
-  stock_actual: number
-  codigo_barras?: string
-}
-
-interface ItemCarrito {
-  id: string
-  productoId: string
-  nombre: string
-  talla: string
-  color: string
-  cantidad: number
-  precio: number
-  subtotal: number
-}
-
-interface Cliente {
-  id: string
-  nombre: string
-  telefono: string
   numero_documento: string
   tipo_documento: string
 }
 
-export default function NuevaVentaPage() {
-  const [productos, setProductos] = useState<Producto[]>([])
-  const [carrito, setCarrito] = useState<ItemCarrito[]>([])
-  const [search, setSearch] = useState('')
-  const [clientes, setClientes] = useState<Cliente[]>([])
-  const [clienteId, setClienteId] = useState('')
-  const [metodoPago, setMetodoPago] = useState('efectivo')
-  const [loading, setLoading] = useState(false)
-  const [autorizado, setAutorizado] = useState(false)
-  const [showTallaModal, setShowTallaModal] = useState(false)
-  const [productoTemporal, setProductoTemporal] = useState<Producto | null>(null)
-  const [tallasDisponibles, setTallasDisponibles] = useState<string[]>([])
-  const [esEnvio, setEsEnvio] = useState(false)
-  const [costoEnvio, setCostoEnvio] = useState<number>(0)
-  const router = useRouter()
+interface UsuarioInfo {
+  nombre_completo: string
+}
 
-  const nextIdRef = useRef(1)
+interface ProductoDetalle {
+  nombre: string
+  talla: string
+  color: string
+}
+
+interface Venta {
+  id: string
+  numero_factura: string
+  fecha_venta: string
+  total: number
+  subtotal: number
+  metodo_pago: string
+  estado: string
+  id_cliente: string | null
+  costo_envio: number
+  es_envio: boolean
+  cliente: ClienteInfo | null
+  usuario: UsuarioInfo | null
+}
+
+interface DetalleVenta {
+  id: string
+  cantidad: number
+  precio_unitario: number
+  subtotal: number
+  producto: ProductoDetalle | null
+}
+
+interface ItemTicket {
+  cantidad: number
+  precio_unitario: number
+  producto: ProductoDetalle | null
+}
+
+interface DetalleRaw {
+  id: string
+  cantidad: number
+  precio_unitario: number
+  subtotal: number
+  producto: ProductoDetalle[]
+}
+
+interface ItemTicketRaw {
+  cantidad: number
+  precio_unitario: number
+  producto: ProductoDetalle[]
+}
+
+interface VentaRaw {
+  id: string
+  numero_factura: string
+  fecha_venta: string
+  total: number
+  subtotal: number
+  metodo_pago: string
+  estado: string
+  id_cliente: string | null
+  costo_envio: number | null
+  es_envio: boolean | null
+  cliente: ClienteInfo[]
+  usuario: UsuarioInfo[]
+}
+
+const formatearFechaSV = (fechaISO: string): string => {
+  const fechaUTC = fechaISO.endsWith('Z') || fechaISO.includes('+') ? fechaISO : `${fechaISO}Z`
+  const fecha = new Date(fechaUTC)
+  return fecha.toLocaleString('es-SV', {
+    timeZone: 'America/El_Salvador',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true
+  })
+}
+
+type ClienteResponse = ClienteInfo | ClienteInfo[] | null
+type UsuarioResponse = UsuarioInfo | UsuarioInfo[] | null
+type ProductoResponse = ProductoDetalle | ProductoDetalle[] | null
+
+export default function HistorialVentasPage() {
+  const [ventas, setVentas] = useState<Venta[]>([])
+  const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
+  const [fechaInicio, setFechaInicio] = useState('')
+  const [fechaFin, setFechaFin] = useState('')
+  const [selectedVenta, setSelectedVenta] = useState<Venta | null>(null)
+  const [detalles, setDetalles] = useState<DetalleVenta[]>([])
+  const [showModal, setShowModal] = useState(false)
+  const [autorizado, setAutorizado] = useState(false)
+  const [rol, setRol] = useState<string>('')
+  const router = useRouter()
 
   const verificarRol = useCallback(async () => {
     const { data: { session } } = await supabase.auth.getSession()
@@ -58,26 +117,18 @@ export default function NuevaVentaPage() {
       router.push('/login')
       return false
     }
-
     const { data: usuario } = await supabase
       .from('usuarios')
       .select('rol')
       .eq('id', session.user.id)
       .single()
-
     if (!usuario || (usuario.rol !== 'admin' && usuario.rol !== 'gerente' && usuario.rol !== 'vendedor')) {
       router.push('/dashboard')
       return false
     }
-
+    setRol(usuario.rol)
     return true
   }, [router])
-
-  const generarIdUnico = () => {
-    const id = nextIdRef.current
-    nextIdRef.current += 1
-    return `item-${id}`
-  }
 
   const verificarSesion = useCallback(async () => {
     const { data } = await supabase.auth.getSession()
@@ -86,188 +137,249 @@ export default function NuevaVentaPage() {
     }
   }, [router])
 
-  const cargarProductos = useCallback(async () => {
-    const { data, error } = await supabase
-      .from('productos')
-      .select('id, nombre, talla, color, precio_venta, stock_actual, codigo_barras')
-      .eq('activo', true)
+  const obtenerClienteData = (cliente: ClienteResponse): ClienteInfo | null => {
+    if (!cliente) return null
+    if (Array.isArray(cliente) && cliente.length > 0) return cliente[0]
+    if (!Array.isArray(cliente)) return cliente
+    return null
+  }
 
-    if (error) {
-      console.error('Error al cargar productos:', error)
-    }
+  const obtenerUsuarioData = (usuario: UsuarioResponse): UsuarioInfo | null => {
+    if (!usuario) return null
+    if (Array.isArray(usuario) && usuario.length > 0) return usuario[0]
+    if (!Array.isArray(usuario)) return usuario
+    return null
+  }
 
-    setProductos(data || [])
-  }, [])
+  const obtenerProductoData = (producto: ProductoResponse): ProductoDetalle | null => {
+    if (!producto) return null
+    if (Array.isArray(producto) && producto.length > 0) return producto[0]
+    if (!Array.isArray(producto)) return producto
+    return null
+  }
 
-  const cargarClientes = useCallback(async () => {
-    const { data } = await supabase
-      .from('clientes')
-      .select('id, nombre, telefono, numero_documento, tipo_documento')
-      .limit(50)
-    setClientes(data || [])
-  }, [])
-
-  const clienteSeleccionado = clienteId ? clientes.find(c => c.id === clienteId) || null : null
-
-  const totalProductos = carrito.reduce((sum, item) => sum + (item.cantidad * item.precio), 0)
-  const total = totalProductos + (esEnvio ? costoEnvio : 0)
-
-  const generarNumeroFactura = useCallback(async () => {
+  const cargarVentas = useCallback(async () => {
+    setLoading(true)
     try {
-      const { data, error } = await supabase.rpc('siguiente_numero_factura')
-      if (error) {
-        console.error('Error de Supabase:', error)
-        return `FAC-${Date.now()}`
+      let query = supabase
+        .from('ventas')
+        .select(`
+          id,
+          numero_factura,
+          fecha_venta,
+          total,
+          subtotal,
+          metodo_pago,
+          estado,
+          id_cliente,
+          costo_envio,
+          es_envio,
+          cliente:clientes!ventas_id_cliente_fkey (
+            nombre,
+            numero_documento,
+            tipo_documento
+          ),
+          usuario:usuarios!ventas_id_usuario_fkey (
+            nombre_completo
+          )
+        `)
+        .order('fecha_venta', { ascending: false })
+
+      if (fechaInicio) {
+        query = query.gte('fecha_venta', fechaInicio)
       }
-      if (!data) {
-        console.error('No se recibió data')
-        return `FAC-${Date.now()}`
+      if (fechaFin) {
+        query = query.lte('fecha_venta', `${fechaFin} 23:59:59`)
       }
-      return data
+
+      const { data, error } = await query
+
+      if (error) throw error
+
+      const ventasFormateadas: Venta[] = (data || []).map((item: VentaRaw) => ({
+        id: item.id,
+        numero_factura: item.numero_factura,
+        fecha_venta: item.fecha_venta,
+        total: item.total,
+        subtotal: item.subtotal,
+        metodo_pago: item.metodo_pago,
+        estado: item.estado,
+        id_cliente: item.id_cliente,
+        costo_envio: item.costo_envio || 0,
+        es_envio: item.es_envio || false,
+        cliente: obtenerClienteData(item.cliente),
+        usuario: obtenerUsuarioData(item.usuario)
+      }))
+
+      setVentas(ventasFormateadas)
     } catch (error) {
-      console.error('Error en try-catch:', error)
-      return `FAC-${Date.now()}`
+      console.error('Error:', error)
+    } finally {
+      setLoading(false)
     }
-  }, [])
+  }, [fechaInicio, fechaFin])
 
   useEffect(() => {
     const iniciar = async () => {
       const tieneAcceso = await verificarRol()
       if (!tieneAcceso) return
       await verificarSesion()
-      await cargarProductos()
-      await cargarClientes()
+      await cargarVentas()
       setAutorizado(true)
     }
     iniciar()
-  }, [verificarRol, verificarSesion, cargarProductos, cargarClientes])
+  }, [verificarRol, verificarSesion, cargarVentas])
 
-  const productosFiltrados = productos.filter(p => {
-    const texto = search.toLowerCase().trim()
-    if (!texto) return true
+  const verDetalle = async (venta: Venta) => {
+    setSelectedVenta(venta)
+    setShowModal(true)
 
-    return (
-      p.nombre?.toLowerCase().includes(texto) ||
-      p.talla?.toLowerCase().includes(texto) ||
-      p.color?.toLowerCase().includes(texto) ||
-      (p.codigo_barras ? p.codigo_barras.toLowerCase().includes(texto) : false)
+    const { data, error } = await supabase
+      .from('detalle_ventas')
+      .select(`
+        id,
+        cantidad,
+        precio_unitario,
+        subtotal,
+        producto:productos!detalle_ventas_id_producto_fkey (
+          nombre,
+          talla,
+          color
+        )
+      `)
+      .eq('id_venta', venta.id)
+
+    if (error) {
+      console.error('Error al cargar detalles:', error)
+      return
+    }
+
+    if (data) {
+      const detallesFormateados: DetalleVenta[] = (data as DetalleRaw[]).map((item: DetalleRaw) => ({
+        id: item.id,
+        cantidad: item.cantidad,
+        precio_unitario: item.precio_unitario,
+        subtotal: item.subtotal,
+        producto: obtenerProductoData(item.producto)
+      }))
+      setDetalles(detallesFormateados)
+    }
+  }
+
+  // ✅ Eliminar venta: la función en Supabase restaura el stock y borra
+  // detalle + venta en una sola transacción atómica. Si algo falla,
+  // nada queda a medias.
+  const eliminarVenta = async (venta: Venta) => {
+    const confirmar = window.confirm(
+      `¿Eliminar la venta ${venta.numero_factura}?\n\nSe devolverá el stock de los productos y esta acción no se puede deshacer.`
     )
-  })
+    if (!confirmar) return
 
-  const agregarProductoAlCarrito = (producto: Producto, tallaSeleccionada?: string) => {
-    const tallaFinal = tallaSeleccionada || producto.talla
+    try {
+      const { error } = await supabase.rpc('eliminar_venta_completa', {
+        p_id_venta: venta.id
+      })
 
-    const existente = carrito.find(item =>
-      item.productoId === producto.id && item.talla === tallaFinal
-    )
+      if (error) throw error
 
-    if (existente) {
-      if (existente.cantidad + 1 > producto.stock_actual) {
-        alert(`Solo hay ${producto.stock_actual} unidades disponibles`)
-        return
-      }
-      setCarrito(carrito.map(item =>
-        item.id === existente.id
-          ? { ...item, cantidad: item.cantidad + 1, subtotal: (item.cantidad + 1) * item.precio }
-          : item
-      ))
-    } else {
-      setCarrito([...carrito, {
-        id: generarIdUnico(),
-        productoId: producto.id,
-        nombre: producto.nombre,
-        talla: tallaFinal,
-        color: producto.color,
-        cantidad: 1,
-        precio: producto.precio_venta,
-        subtotal: producto.precio_venta
-      }])
+      setVentas(prev => prev.filter(v => v.id !== venta.id))
+      if (showModal) setShowModal(false)
+      alert('Venta eliminada y stock restaurado correctamente.')
+    } catch (error) {
+      console.error('Error al eliminar venta:', error)
+      const mensaje = error instanceof Error ? error.message : 'Error desconocido'
+      alert(`No se pudo eliminar la venta: ${mensaje}`)
     }
   }
 
-  const agregarAlCarrito = (producto: Producto) => {
-    if (producto.stock_actual === 0) {
-      alert('Producto sin stock disponible')
+  const reimprimirTicket = async (venta: Venta) => {
+    interface DetalleRaw {
+      cantidad: number
+      precio_unitario: number
+      producto: ProductoDetalle[] | null
+    }
+
+    interface ClienteData {
+      nombre: string
+      numero_documento: string
+      tipo_documento: string
+      telefono: string
+    }
+
+    const { data: detallesData, error } = await supabase
+      .from('detalle_ventas')
+      .select(`
+        cantidad,
+        precio_unitario,
+        producto:productos!detalle_ventas_id_producto_fkey (
+          nombre,
+          talla,
+          color
+        )
+      `)
+      .eq('id_venta', venta.id)
+
+    if (error) {
+      console.error('Error al cargar detalles:', error)
       return
     }
 
-    if (producto.talla && producto.talla.includes(',')) {
-      setProductoTemporal(producto)
-      const tallas = producto.talla.split(',').map(t => t.trim()).filter(t => t !== '')
-      setTallasDisponibles(tallas)
-      setShowTallaModal(true)
-      return
-    }
+    const items = (detallesData || []).map((item: DetalleRaw) => ({
+      cantidad: item.cantidad,
+      precio_unitario: item.precio_unitario,
+      producto: obtenerProductoData(item.producto)
+    }))
 
-    agregarProductoAlCarrito(producto)
-  }
+    const fechaOriginal = formatearFechaSV(venta.fecha_venta)
+    const subtotalProductos = items.reduce((sum, item) => sum + (item.cantidad * item.precio_unitario), 0)
+    const envioMonto = venta.es_envio ? (venta.costo_envio || 0) : 0
+    const total = venta.total || (subtotalProductos + envioMonto)
 
-  const actualizarCantidad = (id: string, nuevaCantidad: number) => {
-    if (nuevaCantidad < 1) {
-      eliminarDelCarrito(id)
-      return
-    }
-    const item = carrito.find(i => i.id === id)
-    if (item) {
-      const producto = productos.find(p => p.id === item.productoId)
-      if (producto && nuevaCantidad > producto.stock_actual) {
-        alert('No hay suficiente stock')
-        return
-      }
-    }
-    setCarrito(carrito.map(item =>
-      item.id === id
-        ? { ...item, cantidad: nuevaCantidad, subtotal: nuevaCantidad * item.precio }
-        : item
-    ))
-  }
-
-  const eliminarDelCarrito = (id: string) => {
-    setCarrito(carrito.filter(item => item.id !== id))
-  }
-
-  // ✅ Ticket con línea de envío opcional
-  const imprimirTicket = (
-    factura: string,
-    cliente: Cliente | null,
-    carritoItems: ItemCarrito[],
-    totalProductosVal: number,
-    pagoMetodo: string,
-    envioActivo: boolean,
-    envioMonto: number
-  ) => {
-    const fecha = new Date().toLocaleString('es-SV')
-
-    const totalFinal = totalProductosVal + (envioActivo ? envioMonto : 0)
-
-    const duenaNombre = "JJPantalones"
+    const duenaNombre = "jjpantalones"
     const duenaTelefono = "7099-7994"
 
-    const itemsHtml = carritoItems.map(item => {
-      let tallaMostrar = item.talla
-      if (tallaMostrar && tallaMostrar.includes(',')) {
-        tallaMostrar = tallaMostrar.split(',')[0].trim()
+    let clienteNombre = 'Cliente Mostrador'
+    let clienteDocumento = ''
+    let clienteTipo = ''
+    let clienteTelefono = ''
+
+    if (venta.id_cliente) {
+      const { data: clienteData } = await supabase
+        .from('clientes')
+        .select('nombre, numero_documento, tipo_documento, telefono')
+        .eq('id', venta.id_cliente)
+        .single() as { data: ClienteData | null }
+
+      if (clienteData) {
+        clienteNombre = clienteData.nombre
+        clienteDocumento = clienteData.numero_documento || ''
+        clienteTipo = clienteData.tipo_documento || ''
+        clienteTelefono = clienteData.telefono || ''
       }
+    } else if (venta.cliente) {
+      clienteNombre = venta.cliente.nombre
+      clienteDocumento = venta.cliente.numero_documento || ''
+      clienteTipo = venta.cliente.tipo_documento || ''
+    }
 
-      return `
-        <div style="margin-bottom: 8px;">
-          <div><strong>${item.cantidad}x</strong> ${item.nombre} <span style="color: #003366;">(Talla: ${tallaMostrar})</span></div>
-          <div style="margin-left: 20px; font-size: 11px;">Precio unitario: $${item.precio.toFixed(2)}</div>
-          <div style="margin-left: 20px; font-size: 11px;">Subtotal: $${(item.cantidad * item.precio).toFixed(2)}</div>
-        </div>
-      `
-    }).join('')
+    const itemsHtml = items.map((item) => `
+      <div style="margin-bottom: 8px;">
+        <div><strong>${item.cantidad}x</strong> ${item.producto?.nombre || 'Producto'} (${item.producto?.talla || ''}/${item.producto?.color || ''})</div>
+        <div style="margin-left: 20px; font-size: 11px;">Precio unitario: $${item.precio_unitario.toFixed(2)}</div>
+        <div style="margin-left: 20px; font-size: 11px;">Subtotal: $${(item.cantidad * item.precio_unitario).toFixed(2)}</div>
+      </div>
+    `).join('')
 
-    const envioHtml = envioActivo && envioMonto > 0 ? `
+    const envioHtml = envioMonto > 0 ? `
       <div class="info-row"><span>ENVÍO:</span><span>$${envioMonto.toFixed(2)}</span></div>
     ` : ''
 
-    const html = `
+    const htmlTicket = `
       <!DOCTYPE html>
       <html>
       <head>
         <meta charset="UTF-8">
-        <title>Ticket ${factura}</title>
+        <title>Ticket ${venta.numero_factura}</title>
         <style>
           * { margin: 0; padding: 0; box-sizing: border-box; }
           body {
@@ -284,8 +396,10 @@ export default function NuevaVentaPage() {
           .line { border-top: 1px dashed #000; margin: 10px 0; }
           .line-solid { border-top: 1px solid #000; margin: 10px 0; }
           .info-row { display: flex; justify-content: space-between; margin: 5px 0; }
+          .producto-row { margin: 8px 0; text-align: left; }
           .total { font-size: 14px; font-weight: bold; }
           .gracias { margin-top: 15px; font-size: 10px; color: #666; }
+          .reimpreso { font-size: 8px; color: red; margin-top: 5px; }
           @media print {
             body { margin: 0; padding: 10px; }
           }
@@ -301,15 +415,15 @@ export default function NuevaVentaPage() {
 
           <div class="line"></div>
 
-          <div class="info-row"><span>FACTURA:</span><span><strong>${factura}</strong></span></div>
-          <div class="info-row"><span>FECHA:</span><span>${fecha}</span></div>
+          <div class="info-row"><span>FACTURA:</span><span><strong>${venta.numero_factura}</strong></span></div>
+          <div class="info-row"><span>FECHA:</span><span>${fechaOriginal}</span></div>
           <div class="info-row"><span>CAJA:</span><span>Principal</span></div>
 
           <div class="line"></div>
 
-          <div class="info-row"><span>CLIENTE:</span><span><strong>${cliente?.nombre || 'Cliente Mostrador'}</strong></span></div>
-          ${cliente?.numero_documento ? `<div class="info-row"><span>DOCUMENTO:</span><span>${cliente.tipo_documento}: ${cliente.numero_documento}</span></div>` : ''}
-          ${cliente?.telefono ? `<div class="info-row"><span>TELÉFONO:</span><span>${cliente.telefono}</span></div>` : ''}
+          <div class="info-row"><span>CLIENTE:</span><span><strong>${clienteNombre}</strong></span></div>
+          ${clienteDocumento ? `<div class="info-row"><span>DOCUMENTO:</span><span>${clienteTipo}: ${clienteDocumento}</span></div>` : ''}
+          ${clienteTelefono ? `<div class="info-row"><span>TELÉFONO:</span><span>${clienteTelefono}</span></div>` : ''}
 
           <div class="line"></div>
 
@@ -318,16 +432,16 @@ export default function NuevaVentaPage() {
 
           <div class="line"></div>
 
-          <div class="info-row"><span>SUBTOTAL PRODUCTOS:</span><span>$${totalProductosVal.toFixed(2)}</span></div>
+          <div class="info-row"><span>SUBTOTAL PRODUCTOS:</span><span>$${subtotalProductos.toFixed(2)}</span></div>
           ${envioHtml}
 
           <div class="line"></div>
 
-          <div class="info-row total"><span>TOTAL:</span><span><strong>$${totalFinal.toFixed(2)}</strong></span></div>
+          <div class="info-row total"><span>TOTAL:</span><span><strong>$${total.toFixed(2)}</strong></span></div>
 
           <div class="line"></div>
 
-          <div class="info-row"><span>MÉTODO DE PAGO:</span><span>${pagoMetodo === 'efectivo' ? '💵 Efectivo' : pagoMetodo === 'tarjeta' ? '💳 Tarjeta' : '🏦 Transferencia'}</span></div>
+          <div class="info-row"><span>MÉTODO DE PAGO:</span><span>${venta.metodo_pago === 'efectivo' ? '💵 Efectivo' : venta.metodo_pago === 'tarjeta' ? '💳 Tarjeta' : '🏦 Transferencia'}</span></div>
 
           <div class="line"></div>
 
@@ -335,6 +449,7 @@ export default function NuevaVentaPage() {
             ¡Gracias por su compra!<br/>
             Visítenos nuevamente
           </div>
+          <div class="reimpreso">** REIMPRESIÓN **</div>
         </div>
         <script>
           window.print();
@@ -344,140 +459,173 @@ export default function NuevaVentaPage() {
       </html>
     `
 
-    const ventana = window.open('', '_blank', 'width=400,height=600')
-    if (ventana) {
-      ventana.document.write(html)
-      ventana.document.close()
+    const ventanaTicket = window.open('', '_blank', 'width=400,height=600')
+    if (ventanaTicket) {
+      ventanaTicket.document.write(htmlTicket)
+      ventanaTicket.document.close()
     }
   }
 
-  // ✅ FUNCIÓN FINALIZAR VENTA CON ENVÍO
-  const finalizarVenta = async () => {
-    if (carrito.length === 0) {
-      alert('Agregue productos al carrito')
+  const descargarPDF = async (venta: Venta) => {
+    const { data: detallesData, error } = await supabase
+      .from('detalle_ventas')
+      .select(`
+        cantidad,
+        precio_unitario,
+        producto:productos!detalle_ventas_id_producto_fkey (
+          nombre,
+          talla,
+          color
+        )
+      `)
+      .eq('id_venta', venta.id)
+
+    if (error) {
+      console.error('Error al cargar detalles:', error)
       return
     }
 
-    if (esEnvio && costoEnvio <= 0) {
-      alert('Ingrese un costo de envío válido, o desmarque la casilla de envío')
-      return
+    const items: ItemTicket[] = (detallesData as ItemTicketRaw[] || []).map((item: ItemTicketRaw) => ({
+      cantidad: item.cantidad,
+      precio_unitario: item.precio_unitario,
+      producto: obtenerProductoData(item.producto)
+    }))
+
+    let clienteNombre = 'Cliente Mostrador'
+    let clienteDocumento = ''
+    let clienteTipo = ''
+
+    if (venta.id_cliente) {
+      const { data: clienteData } = await supabase
+        .from('clientes')
+        .select('nombre, numero_documento, tipo_documento')
+        .eq('id', venta.id_cliente)
+        .single()
+      if (clienteData) {
+        clienteNombre = clienteData.nombre
+        clienteDocumento = clienteData.numero_documento || ''
+        clienteTipo = clienteData.tipo_documento || ''
+      }
+    } else if (venta.cliente) {
+      clienteNombre = venta.cliente.nombre
+      clienteDocumento = venta.cliente.numero_documento || ''
+      clienteTipo = venta.cliente.tipo_documento || ''
     }
 
-    // ✅ Validar stock antes de continuar
-    for (const item of carrito) {
-      const producto = productos.find(p => p.id === item.productoId)
-      if (!producto) {
-        alert(`El producto ${item.nombre} ya no existe`)
-        return
+    const fechaFormateada = formatearFechaSV(venta.fecha_venta)
+    const total = venta.total
+    const envioMonto = venta.es_envio ? (venta.costo_envio || 0) : 0
+
+    const script = document.createElement('script')
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js'
+    script.onload = () => {
+      // @ts-expect-error jsPDF cargado dinámicamente
+      const { jsPDF } = window.jspdf
+      const doc = new jsPDF({ unit: 'mm', format: [80, 200], orientation: 'portrait' })
+
+      const ancho = 80
+      let y = 10
+
+      const centrar = (texto: string, fontSize: number = 8) => {
+        doc.setFontSize(fontSize)
+        const anchoTexto = doc.getTextWidth(texto)
+        doc.text(texto, (ancho - anchoTexto) / 2, y)
+        y += fontSize * 0.5
       }
-      if (producto.stock_actual < item.cantidad) {
-        alert(`Stock insuficiente para ${item.nombre}. Disponible: ${producto.stock_actual}`)
-        return
+
+      const fila = (izq: string, der: string, fontSize: number = 7) => {
+        doc.setFontSize(fontSize)
+        doc.text(izq, 5, y)
+        doc.text(der, ancho - 5 - doc.getTextWidth(der), y)
+        y += 5
       }
-    }
 
-    setLoading(true)
-
-    try {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) throw new Error('Usuario no autenticado')
-
-      let clienteFinal = clienteId
-      let clienteInfo: Cliente | null = clienteSeleccionado
-
-      // ✅ Manejo mejorado de "Cliente Mostrador" - ya no bloquea la venta si falla
-      if (!clienteFinal) {
-        try {
-          const { data: mostrador, error: mostradorError } = await supabase
-            .from('clientes')
-            .select('id, nombre, telefono, numero_documento, tipo_documento')
-            .eq('nombre', 'Cliente Mostrador')
-            .maybeSingle()
-
-          if (mostradorError) {
-            console.error('Error al buscar Cliente Mostrador:', mostradorError)
-          }
-
-          if (mostrador) {
-            clienteFinal = mostrador.id
-            clienteInfo = mostrador as Cliente
-          } else {
-            // ✅ Crear "Cliente Mostrador" si no existe
-            const { data: nuevoMostrador, error: createError } = await supabase
-              .from('clientes')
-              .insert({
-                nombre: 'Cliente Mostrador',
-                tipo_documento: 'DUI',
-                numero_documento: '00000000-0',
-                telefono: '0000-0000'
-              })
-              .select()
-              .single()
-
-            if (createError) {
-              console.error('Error al crear Cliente Mostrador:', createError)
-            } else if (nuevoMostrador) {
-              clienteFinal = nuevoMostrador.id
-              clienteInfo = nuevoMostrador as Cliente
-              await cargarClientes()
-            }
-          }
-        } catch (errorClienteMostrador) {
-          // ✅ Si algo falla aquí (columna faltante, RLS, etc.), no detenemos la venta.
-          // Se registra sin cliente asociado en vez de perder toda la venta.
-          console.error('No se pudo resolver Cliente Mostrador, se continúa sin cliente:', errorClienteMostrador)
-          clienteFinal = ''
-          clienteInfo = null
+      const linea = (punteada: boolean = false) => {
+        if (punteada) {
+          doc.setLineDashPattern([1, 1], 0)
+        } else {
+          doc.setLineDashPattern([], 0)
         }
+        doc.line(5, y, ancho - 5, y)
+        y += 4
       }
 
-      const factura = await generarNumeroFactura()
-      const envioFinal = esEnvio ? costoEnvio : 0
+      doc.setFont('helvetica', 'bold')
+      centrar('JJPANTALONES', 11)
+      y += 1
+      doc.setFont('helvetica', 'normal')
+      centrar('Pantalones por Mayoreo', 7)
+      centrar('El Salvador', 7)
+      y += 2
 
-      const itemsParaVenta = carrito.map(item => ({
-        id_producto: item.productoId,
-        cantidad: item.cantidad,
-        precio_unitario: item.precio
-      }))
+      linea(true)
 
-      // ✅ Registro atómico: venta + detalles + descuento de stock en una sola
-      // transacción real en la base de datos. Si algo falla (stock insuficiente,
-      // producto inexistente, etc.), NADA queda a medias.
-      const { error: errorRpc } = await supabase.rpc('registrar_venta_completa', {
-        p_numero_factura: factura,
-        p_id_cliente: clienteFinal || null,
-        p_id_usuario: user.id,
-        p_metodo_pago: metodoPago,
-        p_costo_envio: envioFinal,
-        p_es_envio: esEnvio,
-        p_items: itemsParaVenta
+      doc.setFont('helvetica', 'bold')
+      fila('FACTURA:', venta.numero_factura, 7)
+      doc.setFont('helvetica', 'normal')
+      fila('FECHA:', fechaFormateada, 6.5)
+      fila('CAJA:', 'Principal', 7)
+      y += 1
+      linea(true)
+
+      doc.setFont('helvetica', 'bold')
+      fila('CLIENTE:', clienteNombre, 7)
+      doc.setFont('helvetica', 'normal')
+      if (clienteDocumento) {
+        fila('DOCUMENTO:', `${clienteTipo}: ${clienteDocumento}`, 7)
+      }
+      y += 1
+      linea(true)
+
+      doc.setFontSize(7)
+      items.forEach(item => {
+        const nombre = item.producto?.nombre || 'Producto'
+        const talla = item.producto?.talla || ''
+        const color = item.producto?.color || ''
+        const subtotalItem = (item.cantidad * item.precio_unitario).toFixed(2)
+        const descripcion = `${item.cantidad}x ${nombre} (${talla}/${color})`
+        const lineasTexto = doc.splitTextToSize(descripcion, ancho - 20)
+        doc.text(lineasTexto, 5, y)
+        doc.text(`$${subtotalItem}`, ancho - 5 - doc.getTextWidth(`$${subtotalItem}`), y)
+        y += lineasTexto.length * 4 + 1
       })
 
-      if (errorRpc) throw errorRpc
+      y += 1
+      linea(true)
 
-      const totalReal = carrito.reduce((sum, item) => sum + (item.cantidad * item.precio), 0)
+      if (envioMonto > 0) {
+        doc.setFont('helvetica', 'normal')
+        fila('ENVÍO:', `$${envioMonto.toFixed(2)}`, 7)
+        y += 1
+        linea(true)
+      }
 
-      // ✅ Recargar productos para reflejar el nuevo stock en la UI
-      await cargarProductos()
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(9)
+      fila('TOTAL:', `$${total.toFixed(2)}`, 9)
+      y += 1
+      linea(true)
 
-      // Imprimir ticket (con envío incluido)
-      imprimirTicket(factura, clienteInfo, carrito, totalReal, metodoPago, esEnvio, envioFinal)
+      doc.setFont('helvetica', 'normal')
+      const metodosTexto: Record<string, string> = {
+        efectivo: 'Efectivo',
+        tarjeta: 'Tarjeta',
+        transferencia: 'Transferencia'
+      }
+      fila('METODO DE PAGO:', metodosTexto[venta.metodo_pago] || venta.metodo_pago, 7)
+      y += 3
+      linea(true)
 
-      // 6. Limpiar carrito y redirigir
-      setTimeout(() => {
-        setCarrito([])
-        setClienteId('')
-        setEsEnvio(false)
-        setCostoEnvio(0)
-        router.push('/dashboard')
-      }, 2000)
+      doc.setFontSize(7)
+      centrar('Gracias por su compra!', 8)
 
-    } catch (error) {
-      console.error('Error:', error)
-      const mensaje = error instanceof Error ? error.message : 'Error desconocido'
-      alert(`Error al procesar la venta: ${mensaje}`)
-    } finally {
-      setLoading(false)
+      doc.save(`Factura-${venta.numero_factura}.pdf`)
+    }
+
+    if (!document.querySelector('script[src*="jspdf"]')) {
+      document.head.appendChild(script)
+    } else {
+      script.onload?.(new Event('load'))
     }
   }
 
@@ -485,6 +633,13 @@ export default function NuevaVentaPage() {
     await supabase.auth.signOut()
     router.push('/login')
   }
+
+  const ventasFiltradas = ventas.filter(v =>
+    v.numero_factura.toLowerCase().includes(search.toLowerCase()) ||
+    v.cliente?.nombre?.toLowerCase().includes(search.toLowerCase())
+  )
+
+  const puedeEliminar = rol === 'admin' || rol === 'gerente'
 
   if (!autorizado) {
     return (
@@ -507,250 +662,216 @@ export default function NuevaVentaPage() {
             </div>
             <div>
               <h1 className="text-white font-bold text-xl">JJPantalones</h1>
-              <p className="text-[#00aaff] text-xs">Punto de Venta</p>
+              <p className="text-[#00aaff] text-xs">Historial de Ventas</p>
             </div>
           </div>
           <div className="flex gap-3">
             <button onClick={() => router.push('/dashboard')} className="text-white hover:text-[#00aaff] transition">📊 Dashboard</button>
+            <button onClick={() => router.push('/ventas/nueva')} className="text-white hover:text-[#00aaff] transition">🛒 Nueva Venta</button>
             <button onClick={() => router.push('/clientes')} className="text-white hover:text-[#00aaff] transition">👥 Clientes</button>
-            <button onClick={() => router.push('/ventas')} className="text-white hover:text-[#00aaff] transition">📜 Historial</button>
+            <button onClick={() => router.push('/reportes')} className="text-white hover:text-[#00aaff] transition">📊 Reportes</button>
             <button onClick={handleLogout} className="bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-lg transition">Salir</button>
           </div>
         </div>
       </header>
 
-      <div className="max-w-7xl mx-auto px-4 py-6">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2">
-            <div className="bg-white rounded-lg shadow p-4">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-xl font-bold text-[#003366]">Productos</h2>
-                <span className="text-xs text-gray-400">
-                  {productosFiltrados.length} de {productos.length}
-                </span>
-              </div>
-              <div className="relative mb-4">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
-                <input
-                  type="text"
-                  placeholder="Buscar por nombre, talla, color o código de barras..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#003366]"
-                  autoFocus
-                />
-              </div>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 max-h-125 overflow-y-auto">
-                {productosFiltrados.map((producto) => (
-                  <button
-                    key={producto.id}
-                    onClick={() => agregarAlCarrito(producto)}
-                    disabled={producto.stock_actual === 0}
-                    className={`border rounded-lg p-3 text-left hover:bg-gray-50 hover:border-[#003366] transition ${
-                      producto.stock_actual === 0 ? 'opacity-50 cursor-not-allowed' : ''
-                    }`}
-                  >
-                    <p className="font-semibold text-sm">{producto.nombre}</p>
-                    <p className="text-xs text-gray-500">{producto.talla} / {producto.color}</p>
-                    {producto.codigo_barras && (
-                      <p className="text-[10px] text-gray-400">Cód: {producto.codigo_barras}</p>
-                    )}
-                    <p className="text-[#003366] font-bold mt-1">${producto.precio_venta}</p>
-                    <p className={`text-xs ${producto.stock_actual === 0 ? 'text-red-500' : 'text-gray-400'}`}>
-                      {producto.stock_actual === 0 ? 'Sin stock' : `Stock: ${producto.stock_actual}`}
-                    </p>
-                  </button>
-                ))}
-                {productosFiltrados.length === 0 && (
-                  <p className="text-gray-500 col-span-full text-center py-8">
-                    No hay productos que coincidan con la búsqueda
-                  </p>
-                )}
-              </div>
+      <main className="max-w-7xl mx-auto px-4 py-8">
+        <h2 className="text-2xl font-bold text-[#003366] mb-6">📜 Historial de Ventas</h2>
+
+        <div className="bg-white rounded-lg shadow p-4 mb-6">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
+              <input
+                type="text"
+                placeholder="Buscar por factura o cliente..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#003366]"
+              />
             </div>
-          </div>
-
-          <div className="lg:col-span-1">
-            <div className="bg-white rounded-lg shadow p-4 sticky top-20">
-              <div className="flex items-center gap-2 mb-4">
-                <ShoppingCart className="text-[#003366]" />
-                <h2 className="text-xl font-bold text-[#003366]">Carrito</h2>
-              </div>
-              <div className="mb-4">
-                <label className="block text-sm font-medium mb-1">Cliente</label>
-                <select
-                  value={clienteId}
-                  onChange={(e) => setClienteId(e.target.value)}
-                  className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#003366]"
-                >
-                  <option value="">Cliente Mostrador (por defecto)</option>
-                  {clientes.map((c) => (<option key={c.id} value={c.id}>{c.nombre}</option>))}
-                </select>
-              </div>
-              <div className="mb-4">
-                <label className="block text-sm font-medium mb-1">Método de pago</label>
-                <select
-                  value={metodoPago}
-                  onChange={(e) => setMetodoPago(e.target.value)}
-                  className="w-full px-3 py-2 border rounded-lg"
-                >
-                  <option value="efectivo">💵 Efectivo</option>
-                  <option value="tarjeta">💳 Tarjeta</option>
-                  <option value="transferencia">🏦 Transferencia</option>
-                </select>
-              </div>
-
-              {/* ✅ Sección de envío */}
-              <div className="mb-4">
-                <label className="flex items-center gap-2 text-sm font-medium mb-2">
-                  <input
-                    type="checkbox"
-                    checked={esEnvio}
-                    onChange={(e) => {
-                      setEsEnvio(e.target.checked)
-                      if (!e.target.checked) setCostoEnvio(0)
-                    }}
-                    className="w-4 h-4"
-                  />
-                  ¿Incluye envío?
-                </label>
-                {esEnvio && (
-                  <div>
-                    <label className="block text-xs text-gray-500 mb-1">Costo del envío ($)</label>
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={costoEnvio === 0 ? '' : costoEnvio}
-                      onChange={(e) => setCostoEnvio(parseFloat(e.target.value) || 0)}
-                      className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#003366]"
-                      placeholder="0.00"
-                    />
-                  </div>
-                )}
-              </div>
-
-              <div className="border-t pt-3 max-h-75 overflow-y-auto">
-                {carrito.length === 0 ? (
-                  <p className="text-gray-400 text-center py-8">Carrito vacío</p>
-                ) : (
-                  carrito.map((item) => (
-                    <div key={item.id} className="flex justify-between items-center py-2 border-b">
-                      <div className="flex-1">
-                        <p className="font-medium text-sm">{item.nombre}</p>
-                        <p className="text-xs text-gray-500">{item.talla} / {item.color}</p>
-                        <p className="text-xs">${item.precio} c/u</p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => actualizarCantidad(item.id, item.cantidad - 1)}
-                          className="w-7 h-7 bg-gray-200 rounded-full flex items-center justify-center hover:bg-gray-300"
-                        >
-                          <Minus size={14} />
-                        </button>
-                        <span className="w-8 text-center">{item.cantidad}</span>
-                        <button
-                          onClick={() => actualizarCantidad(item.id, item.cantidad + 1)}
-                          className="w-7 h-7 bg-gray-200 rounded-full flex items-center justify-center hover:bg-gray-300"
-                        >
-                          <Plus size={14} />
-                        </button>
-                        <button
-                          onClick={() => eliminarDelCarrito(item.id)}
-                          className="text-red-500 ml-2"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-
-              {/* ✅ Desglose con envío */}
-              <div className="border-t pt-3 mt-3">
-                <div className="flex justify-between text-sm text-gray-600">
-                  <span>Subtotal productos:</span>
-                  <span>${totalProductos.toFixed(2)}</span>
-                </div>
-                {esEnvio && costoEnvio > 0 && (
-                  <div className="flex justify-between text-sm text-gray-600">
-                    <span>Envío:</span>
-                    <span>${costoEnvio.toFixed(2)}</span>
-                  </div>
-                )}
-                <div className="flex justify-between mt-1">
-                  <span>TOTAL:</span>
-                  <span className="text-[#003366] font-bold text-xl">${total.toFixed(2)}</span>
-                </div>
-              </div>
-
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Desde</label>
+              <input
+                type="date"
+                value={fechaInicio}
+                onChange={(e) => setFechaInicio(e.target.value)}
+                className="w-full px-3 py-2 border rounded-lg"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Hasta</label>
+              <input
+                type="date"
+                value={fechaFin}
+                onChange={(e) => setFechaFin(e.target.value)}
+                className="w-full px-3 py-2 border rounded-lg"
+              />
+            </div>
+            <div className="flex items-end">
               <button
-                onClick={finalizarVenta}
-                disabled={loading || carrito.length === 0}
-                className="mt-4 w-full bg-[#003366] text-white py-3 rounded-lg hover:bg-[#002244] disabled:opacity-50 flex items-center justify-center gap-2"
+                onClick={() => {
+                  setFechaInicio('')
+                  setFechaFin('')
+                  setSearch('')
+                }}
+                className="w-full bg-gray-200 text-gray-700 py-2 rounded-lg hover:bg-gray-300 transition"
               >
-                <Printer size={18} />
-                {loading ? 'Procesando...' : 'Finalizar Venta'}
+                Limpiar filtros
               </button>
             </div>
           </div>
         </div>
-      </div>
 
-      {showTallaModal && productoTemporal && (
+        <div className="bg-white rounded-lg shadow overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Factura</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Fecha</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Cliente</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Total</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Envío</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Pago</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Estado</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Acciones</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {loading ? (
+                  <tr>
+                    <td colSpan={8} className="px-6 py-8 text-center">Cargando...</td>
+                  </tr>
+                ) : ventasFiltradas.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="px-6 py-8 text-center text-gray-500">No hay ventas registradas</td>
+                  </tr>
+                ) : (
+                  ventasFiltradas.map((v) => (
+                    <tr key={v.id} className="hover:bg-gray-50">
+                      <td className="px-6 py-4 font-mono text-sm">{v.numero_factura}</td>
+                      <td className="px-6 py-4 text-sm">{formatearFechaSV(v.fecha_venta)}</td>
+                      <td className="px-6 py-4">{v.cliente?.nombre || 'Cliente Mostrador'}</td>
+                      <td className="px-6 py-4 font-bold text-[#003366]">${v.total.toFixed(2)}</td>
+                      <td className="px-6 py-4 text-sm">
+                        {v.es_envio && v.costo_envio > 0 ? (
+                          <span className="text-blue-700">🚚 ${v.costo_envio.toFixed(2)}</span>
+                        ) : (
+                          <span className="text-gray-400">—</span>
+                        )}
+                      </td>
+                      <td className="px-6 py-4">
+                        {v.metodo_pago === 'efectivo' ? '💵 Efectivo' :
+                         v.metodo_pago === 'tarjeta' ? '💳 Tarjeta' : '🏦 Transferencia'}
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className={`px-2 py-1 rounded-full text-xs ${v.estado === 'completada' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                          {v.estado === 'completada' ? 'Completada' : v.estado}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex gap-2">
+                          <button onClick={() => verDetalle(v)} className="text-blue-600 hover:text-blue-800" title="Ver detalle">
+                            <Eye size={18} />
+                          </button>
+                          <button onClick={() => reimprimirTicket(v)} className="text-green-600 hover:text-green-800" title="Reimprimir ticket">
+                            <Printer size={18} />
+                          </button>
+                          <button onClick={() => descargarPDF(v)} className="text-purple-600 hover:text-purple-800" title="Descargar PDF">
+                            <FileDown size={18} />
+                          </button>
+                          {puedeEliminar && (
+                            <button onClick={() => eliminarVenta(v)} className="text-red-600 hover:text-red-800" title="Eliminar venta">
+                              <Trash2 size={18} />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <p className="mt-4 text-sm text-gray-500">Total: {ventasFiltradas.length} venta(s)</p>
+      </main>
+
+      {showModal && selectedVenta && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md">
-            <h3 className="text-xl font-bold text-[#003366] mb-2">Seleccionar Talla</h3>
-            <p className="text-gray-600 mb-4">
-              Producto: <strong>{productoTemporal.nombre}</strong>
-            </p>
-            <p className="text-sm text-gray-500 mb-4">
-              ¿Qué talla va a vender?
-            </p>
-
-            <div className="grid grid-cols-3 gap-3 mb-4">
-              {tallasDisponibles.map((talla) => {
-                const disponible = productoTemporal.stock_actual > 0
-
-                return (
-                  <button
-                    key={talla}
-                    onClick={() => {
-                      agregarProductoAlCarrito(productoTemporal, talla)
-                      setShowTallaModal(false)
-                      setProductoTemporal(null)
-                      setTallasDisponibles([])
-                    }}
-                    disabled={!disponible}
-                    className={`py-3 rounded-lg border-2 transition ${
-                      disponible
-                        ? 'border-[#003366] text-[#003366] hover:bg-[#003366] hover:text-white'
-                        : 'border-gray-200 text-gray-400 cursor-not-allowed'
-                    }`}
-                  >
-                    <div className="text-lg font-bold">{talla}</div>
-                    {disponible && (
-                      <div className="text-xs text-green-600">Stock: {productoTemporal.stock_actual}</div>
-                    )}
-                    {!disponible && (
-                      <div className="text-xs text-red-500">Sin stock</div>
-                    )}
-                  </button>
-                )
-              })}
+          <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold text-[#003366]">Detalle de Venta</h3>
+              <button onClick={() => setShowModal(false)} className="text-gray-500 hover:text-gray-700 text-2xl">&times;</button>
             </div>
-
-            <button
-              onClick={() => {
-                setShowTallaModal(false)
-                setProductoTemporal(null)
-                setTallasDisponibles([])
-              }}
-              className="w-full border border-gray-300 py-2 rounded-lg hover:bg-gray-50 transition"
-            >
-              Cancelar
-            </button>
+            <div className="bg-gray-50 p-4 rounded-lg mb-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div><p className="text-xs text-gray-500">Factura</p><p className="font-mono font-bold">{selectedVenta.numero_factura}</p></div>
+                <div><p className="text-xs text-gray-500">Fecha</p><p>{formatearFechaSV(selectedVenta.fecha_venta)}</p></div>
+                <div><p className="text-xs text-gray-500">Cliente</p><p>{selectedVenta.cliente?.nombre || 'Cliente Mostrador'}</p></div>
+                <div><p className="text-xs text-gray-500">Vendedor</p><p>{selectedVenta.usuario?.nombre_completo || 'Sistema'}</p></div>
+                <div><p className="text-xs text-gray-500">Método de pago</p><p>{selectedVenta.metodo_pago}</p></div>
+                <div><p className="text-xs text-gray-500">Total</p><p className="text-xl font-bold text-[#003366]">${selectedVenta.total.toFixed(2)}</p></div>
+                {selectedVenta.es_envio && selectedVenta.costo_envio > 0 && (
+                  <div><p className="text-xs text-gray-500">Envío</p><p className="text-blue-700 font-semibold">🚚 ${selectedVenta.costo_envio.toFixed(2)}</p></div>
+                )}
+              </div>
+            </div>
+            <h4 className="font-bold mb-3">Productos</h4>
+            <div className="overflow-x-auto">
+              <table className="w-full mb-4">
+                <thead className="bg-gray-100">
+                  <tr>
+                    <th className="px-4 py-2 text-left text-sm">Producto</th>
+                    <th className="px-4 py-2 text-center text-sm">Cantidad</th>
+                    <th className="px-4 py-2 text-right text-sm">Precio</th>
+                    <th className="px-4 py-2 text-right text-sm">Subtotal</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {detalles.map((d) => (
+                    <tr key={d.id} className="border-b">
+                      <td className="px-4 py-2 text-sm">
+                        {d.producto?.nombre || 'Producto no disponible'}
+                        {d.producto?.talla && <span className="text-xs text-gray-500 ml-1">({d.producto.talla}/{d.producto.color})</span>}
+                      </td>
+                      <td className="px-4 py-2 text-center text-sm">{d.cantidad}</td>
+                      <td className="px-4 py-2 text-right text-sm">${d.precio_unitario.toFixed(2)}</td>
+                      <td className="px-4 py-2 text-right text-sm">${d.subtotal.toFixed(2)}</td>
+                    </tr>
+                  ))}
+                  {selectedVenta.es_envio && selectedVenta.costo_envio > 0 && (
+                    <tr className="border-b bg-blue-50">
+                      <td className="px-4 py-2 text-sm font-medium" colSpan={3}>🚚 Envío</td>
+                      <td className="px-4 py-2 text-right text-sm font-medium">${selectedVenta.costo_envio.toFixed(2)}</td>
+                    </tr>
+                  )}
+                </tbody>
+                <tfoot className="bg-gray-50">
+                  <tr>
+                    <td colSpan={3} className="px-4 py-2 text-right font-bold">Total:</td>
+                    <td className="px-4 py-2 text-right font-bold text-[#003366]">${selectedVenta.total.toFixed(2)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+            <div className="flex gap-3 mt-4">
+              <button onClick={() => reimprimirTicket(selectedVenta)} className="flex-1 bg-green-600 text-white py-2 rounded-lg hover:bg-green-700 flex items-center justify-center gap-2">
+                <Printer size={18} /> Reimprimir Ticket
+              </button>
+              <button onClick={() => descargarPDF(selectedVenta)} className="flex-1 bg-purple-600 text-white py-2 rounded-lg hover:bg-purple-700 flex items-center justify-center gap-2">
+                <FileDown size={18} /> Descargar PDF
+              </button>
+              {puedeEliminar && (
+                <button onClick={() => eliminarVenta(selectedVenta)} className="flex-1 bg-red-600 text-white py-2 rounded-lg hover:bg-red-700 flex items-center justify-center gap-2">
+                  <Trash2 size={18} /> Eliminar
+                </button>
+              )}
+              <button onClick={() => setShowModal(false)} className="flex-1 border border-gray-300 py-2 rounded-lg hover:bg-gray-50">
+                Cerrar
+              </button>
+            </div>
           </div>
         </div>
       )}
